@@ -38,9 +38,16 @@ jobs:
     - name: Build
       run: cmake --build ${{github.workspace}}/build --config ${{env.BUILD_TYPE}} --target 88emuplayer_Standalone --parallel 4
 
+    - name: List built executables
+      shell: bash
+      run: find bin build -iname '88emuPlayer*.exe' 2>/dev/null || true
+
     - name: Upload 88emuPlayer
       uses: actions/upload-artifact@v4
       with:
         name: 88emuPlayer-win64
-        path: ${{github.workspace}}/build/**/88emuplayer_artefacts/${{env.BUILD_TYPE}}/Standalone/*.exe
+        # The project redirects JUCE products to bin/plugins/<config>, not the build tree
+        path: |
+          ${{github.workspace}}/bin/**/88emuPlayer*.exe
+          ${{github.workspace}}/build/**/88emuPlayer*.exe
         if-no-files-found: error
