@@ -1,6 +1,10 @@
 name: CMake
 
-on: [push, pull_request]
+on:
+  push:
+    # Claude work branches have their own targeted workflows; skip the full matrix there
+    branches-ignore: [ 'claude/**' ]
+  pull_request:
 
 env:
   BUILD_TYPE: Release
