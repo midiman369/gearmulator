@@ -1,0 +1,46 @@
+name: 88emu Windows x64
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ claude/focused-brown-i1fpfv ]
+
+env:
+  BUILD_TYPE: Release
+
+jobs:
+  build:
+    runs-on: windows-2022
+    name: 88emuPlayer Windows x64
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: "recursive"
+
+    - name: Set up MSVC compiler
+      uses: ilammy/msvc-dev-cmd@v1
+      with:
+        arch: x64
+
+    - name: Configure CMake
+      run: >
+        cmake -B ${{github.workspace}}/build -G "Visual Studio 17 2022" -A x64
+        -Dgearmulator_BUILD_JUCEPLUGIN_Standalone=ON
+        -Dgearmulator_SYNTH_OSIRUS=OFF -Dgearmulator_SYNTH_OSTIRUS=OFF
+        -Dgearmulator_SYNTH_VAVRA=OFF -Dgearmulator_SYNTH_XENIA=OFF
+        -Dgearmulator_SYNTH_NODALRED2X=OFF -Dgearmulator_SYNTH_JE8086=OFF
+        -Dgearmulator_COMPONENT_DSPBRIDGE=OFF
+
+    - name: Register compiler problem matcher
+      shell: bash
+      run: echo "::add-matcher::.github/problem-matchers/msvc.json"
+
+    - name: Build
+      run: cmake --build ${{github.workspace}}/build --config ${{env.BUILD_TYPE}} --target 88emuplayer_Standalone --parallel 4
+
+    - name: Upload 88emuPlayer
+      uses: actions/upload-artifact@v4
+      with:
+        name: 88emuPlayer-win64
+        path: ${{github.workspace}}/build/**/88emuplayer_artefacts/${{env.BUILD_TYPE}}/Standalone/*.exe
+        if-no-files-found: error
