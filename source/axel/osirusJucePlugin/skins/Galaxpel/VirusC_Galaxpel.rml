@@ -181,22 +181,22 @@
 			<knob id="Portamento" class="jucePos juceRotary knob1" data-model="partCurrent" param="Portamento Time" style="left: 800.3dp; top: 956.2dp; width: 104dp; height: 104dp;"/>
 			<button id="SubOscTypeSwitch" class="jucePos juceButton toggle-btn-39x102" data-model="partCurrent" valueOff="1" valueOn="0" isToggle="1" param="Suboscillator Shape" style="left: 813.8dp; top: 735.2dp; width: 39dp; height: 102dp;"/>
 			<knob id="Cutoff" class="jucePos juceRotary knob1" data-model="partCurrent" param="Cutoff" style="left: 1167.1dp; top: 57.0601dp; width: 104dp; height: 104dp;"/>
-			<knob id="Reso" class="jucePos juceRotary knob1" data-model="partCurrent" param="Filter1 Resonance" style="left: 1291.1dp; top: 57.0601dp; width: 104dp; height: 104dp;"/>
-			<knob id="EnvAmt" class="jucePos juceRotary knob1" data-model="partCurrent" param="Filter1 Env Amt" style="left: 1415.1dp; top: 57.0601dp; width: 104dp; height: 104dp;"/>
-			<knob id="Keytrack" class="jucePos juceRotary knob1" data-model="partCurrent" param="Filter1 Keyfollow" style="left: 1539.1dp; top: 57.0601dp; width: 104dp; height: 104dp;"/>
-			<knob id="ResVel" class="jucePos juceRotary knob1" data-model="partCurrent" param="Resonance1 Velocity" style="left: 1663.1dp; top: 57.0601dp; width: 104dp; height: 104dp;"/>
-			<knob id="EnvVel" class="jucePos juceRotary knob1" data-model="partCurrent" param="Flt1 EnvAmt Velocity" style="left: 1787.1dp; top: 57.0601dp; width: 104dp; height: 104dp;"/>
+			<knob id="Reso1" class="jucePos juceRotary knob1" controllerLinkCondition="LinkEnv" controllerLinkTarget="Reso2" data-model="partCurrent" param="Filter1 Resonance" style="left: 1291.1dp; top: 57.0601dp; width: 104dp; height: 104dp;"/>
+			<knob id="EnvAmt1" class="jucePos juceRotary knob1" controllerLinkCondition="LinkEnv" controllerLinkTarget="EnvAmt2" data-model="partCurrent" param="Filter1 Env Amt" style="left: 1415.1dp; top: 57.0601dp; width: 104dp; height: 104dp;"/>
+			<knob id="Keytrack1" class="jucePos juceRotary knob1" controllerLinkCondition="LinkEnv" controllerLinkTarget="Keytrack2" data-model="partCurrent" param="Filter1 Keyfollow" style="left: 1539.1dp; top: 57.0601dp; width: 104dp; height: 104dp;"/>
+			<knob id="ResVel1" class="jucePos juceRotary knob1" controllerLinkCondition="LinkEnv" controllerLinkTarget="ResVel2" data-model="partCurrent" param="Resonance1 Velocity" style="left: 1663.1dp; top: 57.0601dp; width: 104dp; height: 104dp;"/>
+			<knob id="EnvVel1" class="jucePos juceRotary knob1" controllerLinkCondition="LinkEnv" controllerLinkTarget="EnvVel2" data-model="partCurrent" param="Flt1 EnvAmt Velocity" style="left: 1787.1dp; top: 57.0601dp; width: 104dp; height: 104dp;"/>
 			<combo id="Mode" class="jucePos txt2" data-model="partCurrent" param="Filter1 Mode" style="left: 1151.4dp; top: 244dp; width: 160dp; height: 50dp; line-height: 50dp;">
 				<combotext>Wave 42</combotext>
 			</combo>
 			<button id="EnvPolarity" class="jucePos juceButton env-pol-radio-btns-38x66" data-model="partCurrent" isToggle="1" param="Filter1 Env Polarity" style="left: 1729.1dp; top: 365.26dp; width: 38dp; height: 66dp;"/>
 			<knob id="Cutoff2" class="jucePos juceRotary knob1" data-model="partCurrent" data-class-juceConditionDisabled="Filter2_Cutoff_Link_value == 1" param="Cutoff2" style="left: 1167.1dp; top: 481.408dp; width: 104dp; height: 104dp;"/>
 			<knob id="Cutoff2" class="jucePos juceRotary knob1" data-model="partCurrent" data-class-juceConditionDisabled="Filter2_Cutoff_Link_value == 0" param="Cutoff2Offset" style="left: 1167.1dp; top: 481.408dp; width: 104dp; height: 104dp;"/>
-			<knob id="Reso" class="jucePos juceRotary knob1" data-model="partCurrent" param="Filter2 Resonance" style="left: 1291.1dp; top: 481.408dp; width: 104dp; height: 104dp;"/>
-			<knob id="EnvAmt" class="jucePos juceRotary knob1" data-model="partCurrent" param="Filter2 Env Amt" style="left: 1415.1dp; top: 481.408dp; width: 104dp; height: 104dp;"/>
-			<knob id="Keytrack" class="jucePos juceRotary knob1" data-model="partCurrent" param="Filter2 Keyfollow" style="left: 1539.1dp; top: 481.408dp; width: 104dp; height: 104dp;"/>
-			<knob id="ResVel" class="jucePos juceRotary knob1" data-model="partCurrent" param="Resonance2 Velocity" style="left: 1663.1dp; top: 481.408dp; width: 104dp; height: 104dp;"/>
-			<knob id="EnvVel" class="jucePos juceRotary knob1" data-model="partCurrent" param="Flt2 EnvAmt Velocity" style="left: 1787.1dp; top: 481.408dp; width: 104dp; height: 104dp;"/>
+			<knob id="Reso2" class="jucePos juceRotary knob1" controllerLinkCondition="LinkEnv" controllerLinkTarget="Reso1" data-model="partCurrent" param="Filter2 Resonance" style="left: 1291.1dp; top: 481.408dp; width: 104dp; height: 104dp;"/>
+			<knob id="EnvAmt2" class="jucePos juceRotary knob1" controllerLinkCondition="LinkEnv" controllerLinkTarget="EnvAmt1" data-model="partCurrent" param="Filter2 Env Amt" style="left: 1415.1dp; top: 481.408dp; width: 104dp; height: 104dp;"/>
+			<knob id="Keytrack2" class="jucePos juceRotary knob1" controllerLinkCondition="LinkEnv" controllerLinkTarget="Keytrack1" data-model="partCurrent" param="Filter2 Keyfollow" style="left: 1539.1dp; top: 481.408dp; width: 104dp; height: 104dp;"/>
+			<knob id="ResVel2" class="jucePos juceRotary knob1" controllerLinkCondition="LinkEnv" controllerLinkTarget="ResVel1" data-model="partCurrent" param="Resonance2 Velocity" style="left: 1663.1dp; top: 481.408dp; width: 104dp; height: 104dp;"/>
+			<knob id="EnvVel2" class="jucePos juceRotary knob1" controllerLinkCondition="LinkEnv" controllerLinkTarget="EnvVel1" data-model="partCurrent" param="Flt2 EnvAmt Velocity" style="left: 1787.1dp; top: 481.408dp; width: 104dp; height: 104dp;"/>
 			<combo id="Mode" class="jucePos txt2" data-model="partCurrent" param="Filter2 Mode" style="left: 1151.2dp; top: 345dp; width: 160dp; height: 50dp; line-height: 50dp;">
 				<combotext>Wave 42</combotext>
 			</combo>
@@ -205,14 +205,15 @@
 			<combo id="FilterRouting" class="jucePos txt2" data-model="partCurrent" param="Filter Routing" style="left: 1523.2dp; top: 244dp; width: 158dp; height: 50dp; line-height: 50dp;">
 				<combotext>Wave 42</combotext>
 			</combo>
-			<combo id="FilterSaturationCurve" class="jucePos txt2" data-model="partCurrent" param="Saturation Curve" style="left: 1523.2dp; top: 345dp; width: 158dp; height: 50dp; line-height: 50dp;">
+			<combo id="FilterSaturationCurve" class="jucePos txt2" data-class-juceConditionDisabled="Filter1_Mode_value > 3" data-model="partCurrent" param="Saturation Curve" style="left: 1523.2dp; top: 345dp; width: 158dp; height: 50dp; line-height: 50dp;">
 				<combotext>Wave 42</combotext>
 			</combo>
+			<div id="SaturationAnalog" class="jucePos txt2" data-class-juceConditionDisabled="!(Filter1_Mode_value > 3)" data-model="partCurrent" style="left: 1523.2dp; top: 345dp; width: 158dp; height: 50dp; padding: 1dp 30dp 2dp 1dp; font-size: 24dp; line-height: 24dp;">Analog Overdrive</div>
 			<combo id="FilterKeyfollowBase" class="jucePos txt2" data-model="partCurrent" param="Filter Keytrack Base" style="left: 1727dp; top: 248dp; width: 158dp; height: 42dp; line-height: 42dp;">
 				<combotext>Wave 42</combotext>
 			</combo>
 			<button id="LinkCutoff" class="jucePos juceButton chain-btn-36x62" data-model="partCurrent" isToggle="1" param="Filter2 Cutoff Link" style="left: 1099dp; top: 288.5dp; width: 36dp; height: 62dp;"/>
-			<button id="LinkEnv" class="jucePos juceButton chain-btn-36x62" isToggle="1" style="left: 1925.3dp; top: 288.5dp; width: 36dp; height: 62dp;"/>
+			<button id="LinkEnv" class="jucePos juceButton chain-btn-36x62" data-model="partCurrent" isToggle="1" param="Filter Select" valueOn="2" valueOff="0" style="left: 1925.3dp; top: 288.5dp; width: 36dp; height: 62dp;"/>
 			<knob id="Attack" class="jucePos juceRotary knob1" data-model="partCurrent" param="Filter Env Attack" style="left: 1162dp; top: 724dp; width: 104dp; height: 104dp;"/>
 			<knob id="Decay" class="jucePos juceRotary knob1" data-model="partCurrent" param="Filter Env Decay" style="left: 1318dp; top: 724dp; width: 104dp; height: 104dp;"/>
 			<knob id="SustainLevel" class="jucePos juceRotary knob1" data-model="partCurrent" param="Filter Env Sustain" style="left: 1474dp; top: 724dp; width: 104dp; height: 104dp;"/>
@@ -423,14 +424,14 @@
 		</img>
 		<img id="page_arp" class="jucePos" src="arp_page_midiPorts.png" tabgroup="pages" tabpage="3" style="left: 724dp; top: 325dp; width: 1970dp; height: 1125dp;">
 			<knob id="VelOsc1Shape" class="jucePos juceRotary knob1" data-model="partCurrent" param="Osc1 Shape Velocity" style="left: 58.9973dp; top: 78.542dp; width: 104dp; height: 104dp;"/>
-			<knob id="VelFlt1Freq" class="jucePos juceRotary knob1" data-model="partCurrent" param="Flt1 EnvAmt Velocity" style="left: 188.997dp; top: 78.542dp; width: 104dp; height: 104dp;"/>
-			<knob id="VelFlt1Res" class="jucePos juceRotary knob1" data-model="partCurrent" param="Resonance1 Velocity" style="left: 318.997dp; top: 78.542dp; width: 104dp; height: 104dp;"/>
+			<knob id="VelFlt1Freq" class="jucePos juceRotary knob1" controllerLinkCondition="LinkEnv" controllerLinkTarget="VelFlt2Freq" data-model="partCurrent" param="Flt1 EnvAmt Velocity" style="left: 188.997dp; top: 78.542dp; width: 104dp; height: 104dp;"/>
+			<knob id="VelFlt1Res" class="jucePos juceRotary knob1" controllerLinkCondition="LinkEnv" controllerLinkTarget="VelFlt2Res" data-model="partCurrent" param="Resonance1 Velocity" style="left: 318.997dp; top: 78.542dp; width: 104dp; height: 104dp;"/>
 			<knob id="VelPW" class="jucePos juceRotary knob1" data-model="partCurrent" param="PulseWidth Velocity" style="left: 448.997dp; top: 78.542dp; width: 104dp; height: 104dp;"/>
 			<knob id="VelVol" class="jucePos juceRotary knob1" data-model="partCurrent" param="Amp Velocity" style="left: 578.997dp; top: 78.542dp; width: 104dp; height: 104dp;"/>
 			<knob id="VelPan" class="jucePos juceRotary knob1" data-model="partCurrent" param="Panorama Velocity" style="left: 708.997dp; top: 78.542dp; width: 104dp; height: 104dp;"/>
 			<knob id="VelOsc2Shape" class="jucePos juceRotary knob1" data-model="partCurrent" param="Osc2 Shape Velocity" style="left: 187.997dp; top: 289.542dp; width: 104dp; height: 104dp;"/>
-			<knob id="VelFlt2Freq" class="jucePos juceRotary knob1" data-model="partCurrent" param="Flt2 EnvAmt Velocity" style="left: 317.997dp; top: 289.542dp; width: 104dp; height: 104dp;"/>
-			<knob id="VelFlt2Res" class="jucePos juceRotary knob1" data-model="partCurrent" param="Resonance2 Velocity" style="left: 447.997dp; top: 289.542dp; width: 104dp; height: 104dp;"/>
+			<knob id="VelFlt2Freq" class="jucePos juceRotary knob1" controllerLinkCondition="LinkEnv" controllerLinkTarget="VelFlt1Freq" data-model="partCurrent" param="Flt2 EnvAmt Velocity" style="left: 317.997dp; top: 289.542dp; width: 104dp; height: 104dp;"/>
+			<knob id="VelFlt2Res" class="jucePos juceRotary knob1" controllerLinkCondition="LinkEnv" controllerLinkTarget="VelFlt1Res" data-model="partCurrent" param="Resonance2 Velocity" style="left: 447.997dp; top: 289.542dp; width: 104dp; height: 104dp;"/>
 			<knob id="VelFM" class="jucePos juceRotary knob1" data-model="partCurrent" param="Fm Amount Velocity" style="left: 577.997dp; top: 289.542dp; width: 104dp; height: 104dp;"/>
 			<combo id="InputMode" class="jucePos txt6" data-model="partCurrent" param="Input Mode" style="left: 28dp; top: 569dp; width: 160dp; height: 45dp; line-height: 45dp;">
 				<combotext>Wave 42</combotext>
@@ -438,6 +439,8 @@
 			<combo id="InputSelect" class="jucePos txt5" data-model="partCurrent" param="Input Select" style="left: 233dp; top: 574dp; width: 160dp; height: 36dp; line-height: 36dp;">
 				<combotext>Wave 42</combotext>
 			</combo>
+			<img id="MasterTuneBg" class="jucePos" src="master_tune.png" style="left: 536dp; top: 705dp; width: 155dp; height: 147dp;"/>
+			<knob id="MasterTune" class="jucePos juceRotary knob1" data-model="partCurrent" param="Master Tune" style="left: 560dp; top: 707dp; width: 104dp; height: 104dp;"/>
 			<knob id="PureTuning" class="jucePos juceRotary knob1" data-model="partCurrent" param="Pure Tuning" style="left: 725dp; top: 707dp; width: 104dp; height: 104dp;"/>
 			<knob id="ArpGlobalTempo" class="jucePos juceRotary knob1" data-model="partCurrent" param="Clock Tempo" style="left: 916.5dp; top: 78.6001dp; width: 104dp; height: 104dp;"/>
 			<knob id="ArpNoteLength" class="jucePos juceRotary knob1" data-model="partCurrent" param="Arp Note Length" style="left: 1045.2dp; top: 78.6001dp; width: 104dp; height: 104dp;"/>

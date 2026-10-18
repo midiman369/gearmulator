@@ -7,6 +7,7 @@ file(TOUCH_NOCREATE ${CMAKE_CURRENT_LIST_DIR}/version.h.in)
 file(TOUCH_NOCREATE ${CMAKE_CURRENT_LIST_DIR}/versionDateTime.h.in)
 
 set(SOURCES
+	audioLevels.cpp audioLevels.h
 	bypassBuffer.cpp bypassBuffer.h
 	createVersionDateTime.cmake
 	clipboard.cpp clipboard.h
@@ -56,11 +57,18 @@ set(SOURCES_PATCHDB
 	patchdb/tags.cpp patchdb/tags.h
 )
 
+set(SOURCES_PATCHMANAGER
+	patchmanager/patchmanager.cpp patchmanager/patchmanager.h
+	patchmanager/state.cpp patchmanager/state.h
+	patchmanager/uiInterface.h
+)
+
 add_library(jucePluginLib STATIC)
 
-target_sources(jucePluginLib PRIVATE ${SOURCES} ${SOURCES_PATCHDB})
+target_sources(jucePluginLib PRIVATE ${SOURCES} ${SOURCES_PATCHDB} ${SOURCES_PATCHMANAGER})
 source_group("source" FILES ${SOURCES})
 source_group("source\\patchdb" FILES ${SOURCES_PATCHDB})
+source_group("source\\patchmanager" FILES ${SOURCES_PATCHMANAGER})
 
 target_link_libraries(jucePluginLib PUBLIC juceUiLib synthLib bridgeClient)
 target_compile_definitions(jucePluginLib PRIVATE JUCE_GLOBAL_MODULE_SETTINGS_INCLUDED=1)

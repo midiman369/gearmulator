@@ -7,8 +7,8 @@
 #include "audioTypes.h"
 #include "deviceTypes.h"
 
+#include "midiBufferParser.h"
 #include "midiTypes.h"
-#include "buildconfig.h"
 #include "midiTranslator.h"
 
 #include "baseLib/md5.h"
@@ -26,6 +26,8 @@ namespace synthLib
 		std::string homePath;
 	};
 
+	// The DSPBridge server calls the virtual functions of devices that plugin libraries created: changing any of them
+	// needs a new bridgeLib::g_protocolVersion, see there
 	class Device
 	{
 	public:
@@ -82,20 +84,27 @@ namespace synthLib
 
 		virtual bool isValid() const = 0;
 
-#if SYNTHLIB_DEMO_MODE == 0
 		// The plugin calls these with its processing lock held, process() does not run until they return. They must
 		// never wait for anything that only happens while audio is processed, that would deadlock
 		virtual bool getState(std::vector<uint8_t>& _state, StateType _type) = 0;
 		virtual bool setState(const std::vector<uint8_t>& _state, StateType _type) = 0;
 		virtual bool setStateFromUnknownCustomData(const std::vector<uint8_t> &_state) { return false; }
-#endif
+
+		// Plugin::getState() calls this with the MIDI events that wait for the next process() call. A device that
+		// answers getState() from its own copy of the patches includes the edits among them, so that a host that
+		// saves while it does not process the plugin (a silent track, an inactive slot) does not lose them
+		virtual bool getStateWithPendingMidi(std::vector<uint8_t>& _state, const StateType _type, const std::vector<SMidiEvent>& /*_pendingMidi*/)
+		{
+			return getState(_state, _type);
+		}
 
 		virtual uint32_t getChannelCountIn() = 0;
 		virtual uint32_t getChannelCountOut() = 0;
 
-		virtual bool setDspClockPercent(uint32_t _percent = 100) = 0;
-		virtual uint32_t getDspClockPercent() const = 0;
-		virtual uint64_t getDspClockHz() const = 0;
+		// a device without a DSP clock to change keeps these, see DspClockDevice for one with DSP56300s
+		virtual bool setDspClockPercent(uint32_t /*_percent*/ = 100) { return false; }
+		virtual uint32_t getDspClockPercent() const { return 100; }
+		virtual uint64_t getDspClockHz() const { return 0; }
 		virtual bool canModifyDspClock() const { return false; }
 
 		auto& getMidiTranslator() { return m_midiTranslator; }
@@ -107,9 +116,7 @@ namespace synthLib
 		// They are virtual so that the server runs the code of the library that created the device. Never make them
 		// final: the compiler could then call the server's own copy of them.
 		virtual const std::vector<SMidiEvent>& bridgeProcess(const TAudioInputs& _inputs, const TAudioOutputs& _outputs, size_t _size, const std::vector<SMidiEvent>& _midiIn);
-#if SYNTHLIB_DEMO_MODE == 0
 		virtual const std::vector<uint8_t>& bridgeGetState(StateType _type);
-#endif
 		virtual const std::vector<float>& bridgeGetSupportedSamplerates();
 		virtual const std::vector<float>& bridgeGetPreferredSamplerates();
 
@@ -126,13 +133,42 @@ namespace synthLib
 		// else it is a no-op.
 		virtual void onTransportDiscontinuity(const SMidiEvent& /*_ev*/) {}
 
+		// The host's tempo and song position, see MidiEventType::HostTransport. A marker as well, it never reaches
+		// sendMidi. The DSP bridge client passes it on to the server
+		virtual void onHostTransport(const SMidiEvent& /*_ev*/) {}
+
+		// A device that plays its arpeggiator in C++ instead of in the firmware, see synthLib::Arpeggiator, says so here.
+		// process() then hands it every block's MIDI before the firmware gets any of it: take the notes to arpeggiate out
+		// of _midi and append what is played to _out. The host's transport arrives in _midi as HostTransport events
+		virtual bool hasArpeggiators() const { return false; }
+		virtual void processArpeggiators(std::vector<SMidiEvent>& /*_midi*/, std::vector<SMidiEvent>& /*_out*/,
+			uint32_t /*_sampleCount*/) {}
+
 		void dummyProcess(uint32_t _numSamples);
+
+		// For firmware that schedules incoming MIDI by sample: makes the offset of an event in the current block an
+		// absolute position, the samples processed before this block plus the extra latency
+		void stampOffset(SMidiEvent& _ev) const { _ev.offset += m_numSamplesProcessed + m_extraLatency; }
+
+		// For firmware that sends MIDI as bytes: the product puts what its UART sent into m_midiOutBytes, this turns
+		// them into events with source Device, appended to _midiOut, and empties the buffer
+		void parseMidiOutBytes(std::vector<SMidiEvent>& _midiOut);
+
+		std::vector<uint8_t> m_midiOutBytes;
+
+	private:
+		const std::vector<SMidiEvent>& arpeggiate(const std::vector<SMidiEvent>& _midiIn, size_t _size);
 
 	private:
 		DeviceCreateParams m_createParams;
 		std::vector<SMidiEvent> m_midiIn;
+		std::vector<SMidiEvent> m_arpMidi;
+		std::vector<SMidiEvent> m_arpOut;
 
 		uint32_t m_extraLatency = 0;
+		uint32_t m_numSamplesProcessed = 0;
+
+		MidiBufferParser m_midiOutParser{MidiEventSource::Device};
 
 		MidiTranslator m_midiTranslator;
 		std::vector<SMidiEvent> m_translatorOut;

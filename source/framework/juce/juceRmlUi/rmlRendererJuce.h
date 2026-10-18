@@ -53,6 +53,7 @@ namespace juceRmlUi
 
 		Rml::TextureHandle LoadTexture(Rml::Vector2i& _textureDimensions, const Rml::String& _source) override;
 		Rml::TextureHandle GenerateTexture(Rml::Span<const uint8_t> _source, Rml::Vector2i _sourceDimensions) override;
+		bool UpdateTexture(Rml::TextureHandle _texture, Rml::Span<const uint8_t> _source, Rml::Vector2i _sourceDimensions) override;
 		void ReleaseTexture(Rml::TextureHandle _texture) override;
 
 		Rml::LayerHandle PushLayer() override;
@@ -62,6 +63,9 @@ namespace juceRmlUi
 
 		void EnableScissorRegion(bool _enable) override;
 		void SetScissorRegion(Rml::Rectanglei _region) override;
+
+		void EnableClipMask(bool _enable) override;
+		void RenderToClipMask(Rml::ClipMaskOperation _operation, Rml::CompiledGeometryHandle _geometry, Rml::Vector2f _translation) override;
 
 		void SetTransform(const Rml::Matrix4f* transform) override;
 
@@ -75,6 +79,9 @@ namespace juceRmlUi
 
 		bool m_scissorEnabled = false;
 		Rml::Rectanglei m_scissorRegion;
+
+		bool m_clipMaskEnabled = false;
+		bool m_clipMaskInverse = false;		// the mask keeps what is outside of a shape
 
 		juce::Graphics* m_graphics = nullptr;
 

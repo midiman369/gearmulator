@@ -19,14 +19,12 @@ namespace synthLib
 		return m_bridgeMidiOut;
 	}
 
-#if SYNTHLIB_DEMO_MODE == 0
 	const std::vector<uint8_t>& Device::bridgeGetState(const StateType _type)
 	{
 		m_bridgeState.clear();
 		getState(m_bridgeState, _type);
 		return m_bridgeState;
 	}
-#endif
 
 	const std::vector<float>& Device::bridgeGetSupportedSamplerates()
 	{
@@ -60,11 +58,17 @@ namespace synthLib
 	{
 		_midiOut.clear();
 
-		for (const auto& ev : _midiIn)
+		for (const auto& ev : arpeggiate(_midiIn, _size))
 		{
 			if (ev.type == MidiEventType::TransportDiscontinuity)
 			{
 				onTransportDiscontinuity(ev);
+				continue;
+			}
+
+			if (ev.type == MidiEventType::HostTransport)
+			{
+				onHostTransport(ev);
 				continue;
 			}
 
@@ -79,6 +83,43 @@ namespace synthLib
 		processAudio(_inputs, _outputs, _size);
 
 		readMidiOut(_midiOut);
+
+		m_numSamplesProcessed += static_cast<uint32_t>(_size);
+	}
+
+	void Device::parseMidiOutBytes(std::vector<SMidiEvent>& _midiOut)
+	{
+		m_midiOutParser.write(m_midiOutBytes);
+		m_midiOutBytes.clear();
+		m_midiOutParser.getEvents(_midiOut);
+	}
+
+	const std::vector<SMidiEvent>& Device::arpeggiate(const std::vector<SMidiEvent>& _midiIn, const size_t _size)
+	{
+		if (!hasArpeggiators())
+			return _midiIn;
+
+		m_arpMidi.assign(_midiIn.begin(), _midiIn.end());
+		m_arpOut.clear();
+
+		processArpeggiators(m_arpMidi, m_arpOut, static_cast<uint32_t>(_size));
+
+		// What the arpeggiators play goes in by its offset, after what is there at the same offset already
+		for (const auto& ev : m_arpOut)
+		{
+			auto it = m_arpMidi.end();
+
+			if (!m_arpMidi.empty() && m_arpMidi.back().offset > ev.offset)
+			{
+				it = m_arpMidi.begin();
+				while (it != m_arpMidi.end() && it->offset <= ev.offset)
+					++it;
+			}
+
+			m_arpMidi.insert(it, ev);
+		}
+
+		return m_arpMidi;
 	}
 
 	void Device::setExtraLatencySamples(const uint32_t _size)

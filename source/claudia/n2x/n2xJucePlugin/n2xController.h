@@ -21,6 +21,7 @@ namespace n2xJucePlugin
 
 		baseLib::Event<> onProgramChanged;
 		baseLib::Event<n2x::KnobType, uint8_t> onKnobChanged;
+		baseLib::Event<uint8_t> onArpHoldChanged;	// Arp Hold of parts A-D as bits 0-3
 
 		Controller(AudioPluginAudioProcessor&);
 		~Controller() override;
@@ -53,6 +54,13 @@ namespace n2xJucePlugin
 
 		bool activatePatch(const synthLib::SysexBuffer& _sysex, uint32_t _part);
 
+		// The dump that loads single _sysex into the edit buffer of _part, without locked parameters applied. Safe to
+		// call from any thread
+		static bool createSingleEditBufferDump(synthLib::SysexBuffer& _result, const synthLib::SysexBuffer& _sysex, uint8_t _part);
+
+		// what activatePatch() does once a single for _part is sent
+		void onSingleSent(uint8_t _part) const;
+
 		bool isDerivedParameter(pluginLib::Parameter& _derived, pluginLib::Parameter& _base) const override;
 
 		std::string getSingleName(uint8_t _part) const;
@@ -62,12 +70,17 @@ namespace n2xJucePlugin
 
 		bool getKnobState(uint8_t& _result, n2x::KnobType _type) const;
 
+		bool isArpHold(const uint8_t _part) const { return (m_arpHoldMask >> _part) & 1; }
+
 		std::vector<uint8_t> getPartsForMidiChannel(uint8_t _channel) override;
 
 	private:
+		static void setEditBufferHeader(synthLib::SysexBuffer& _dump, bool _multi, uint8_t _part);
+
 		uint8_t combineSyncRingModDistortion(uint8_t _part, uint8_t _currentCombinedValue, bool _lockedOnly);
 
 		n2x::State m_state;
 		baseLib::EventListener<uint8_t> m_currentPartChanged;
+		uint8_t m_arpHoldMask = 0;
 	};
 }

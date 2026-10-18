@@ -39,7 +39,9 @@ namespace n2x
 	static constexpr uint32_t g_frontPanelSize			= 0x800;
 	static constexpr uint32_t g_keyboardSize			= 0x800;
 
-	static constexpr uint32_t g_samplerate				= 98200;
+	// 3 x 32768 Hz: the MC68331 runs at 32768 Hz x 768 and clocks the DSPs at 1/8 of that, the DSPs multiply it by 36
+	// and DSP B divides that by 1152 for the DACs. The hardware measurement of 98.2 kHz was 0.1 % low (BUG-10446)
+	static constexpr uint32_t g_samplerate				= 98304;
 
 	enum class ButtonType
 	{
@@ -63,13 +65,13 @@ namespace n2x
 		FilterDist		= 0x02'40,
 		Osc2Shape		= 0x02'80,
 
-		Distortion		= 0x04'01,
-		Arp				= 0x04'02,
+		Lfo2Dest		= 0x04'01,
+		FilterKeytrack	= 0x04'02,
 		Store			= 0x04'04,
 		ModEnvDest		= 0x04'08,
 		Lfo1Shape		= 0x04'10,
 		Lfo1Dest		= 0x04'20,
-		Lfo2Shape		= 0x04'40,
+		Arp				= 0x04'40,
 		Osc1Shape		= 0x04'80,
 
 		SlotA			= 0x06'01,

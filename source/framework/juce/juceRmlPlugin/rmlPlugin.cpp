@@ -1,5 +1,8 @@
 #include "rmlPlugin.h"
 
+#include <optional>
+
+#include "rmlLuaAudio.h"
 #include "rmlLuaMidi.h"
 #include "rmlLuaParameters.h"
 #include "rmlLuaSkinVariables.h"
@@ -8,8 +11,10 @@
 #include "rmlPluginDocument.h"
 #include "rmlTabGroup.h"
 
+#include "juceRmlUi/juceRmlComponent.h"
 #include "juceRmlUi/rmlElemComboBox.h"
 #include "juceRmlUi/rmlEventListener.h"
+#include "juceRmlUi/rmlInterfaces.h"
 #include "RmlUi/Core/Context.h"
 #include "RmlUi/Core/CoreInstance.h"
 
@@ -27,25 +32,39 @@ namespace rmlPlugin
 
 	RmlPlugin::~RmlPlugin()
 	{
+		// The editor destroys us before its component, whose render thread still walks the element tree that
+		// the bindings detach from below
+		std::optional<juceRmlUi::RmlInterfaces::ScopedAccess> access;
+		if (m_rmlInterfaces)
+			access.emplace(*m_rmlInterfaces);
+
 		if (auto* L = m_coreInstance.lua_state)
 		{
 			unregisterLuaParameters(L);
 			unregisterLuaSkinVariables(L);
 			unregisterLuaMidi(L);
+			unregisterLuaAudio(L);
 		}
 
 		Rml::UnregisterPlugin(m_coreInstance, this);
+
+		// what the members would release after the access is gone
+		m_documentBeingLoaded.reset();
+		m_contexts.clear();
 	}
 
 	void RmlPlugin::onContextCreate(Rml::Context* _context, juceRmlUi::RmlComponent& _component)
 	{
+		m_rmlInterfaces = &_component.getInterfaces();
+
 		m_contexts.emplace(_context, std::make_unique<RmlPluginContext>(_context, m_controller, _component));
 
 		if (auto* L = _context->GetCoreInstance().lua_state)
 		{
-			registerLuaParameters(L, m_controller);
-			registerLuaSkinVariables(L, m_controller);
-			registerLuaMidi(L, m_controller);
+			registerLuaParameters(L, m_controller, *m_rmlInterfaces);
+			registerLuaSkinVariables(L, m_controller, *m_rmlInterfaces);
+			registerLuaMidi(L, m_controller, *m_rmlInterfaces);
+			registerLuaAudio(L, m_controller);
 		}
 	}
 
@@ -56,6 +75,7 @@ namespace rmlPlugin
 			unregisterLuaParameters(L);
 			unregisterLuaSkinVariables(L);
 			unregisterLuaMidi(L);
+			unregisterLuaAudio(L);
 		}
 
 		m_documentBeingLoaded.reset();

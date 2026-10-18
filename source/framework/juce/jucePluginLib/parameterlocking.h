@@ -4,8 +4,11 @@
 #include <string>
 #include <unordered_set>
 #include <array>
+#include <atomic>
 
 #include "parameterregion.h"
+
+#include "baseLib/event.h"
 
 namespace pluginLib
 {
@@ -17,6 +20,9 @@ namespace pluginLib
 	public:
 		explicit ParameterLocking(Controller& _controller);
 
+		// part, region id, locked. On the thread that locks or unlocks, the message thread so far
+		baseLib::Event<uint8_t, std::string, bool> evRegionLockChanged;
+
 		bool lockRegion(uint8_t _part, const std::string& _id);
 		bool unlockRegion(uint8_t _part, const std::string& _id);
 		const std::set<std::string>& getLockedRegions(uint8_t _part) const;
@@ -24,6 +30,9 @@ namespace pluginLib
 		std::unordered_set<std::string> getLockedParameterNames(uint8_t _part) const;
 		std::unordered_set<const Parameter*> getLockedParameters(uint8_t _part) const;
 		bool isParameterLocked(uint8_t _part, const std::string& _name) const;
+
+		// safe to call from any thread, for example the audio thread
+		bool hasLockedRegions(const uint8_t _part) const { return _part < m_lockedRegionCounts.size() && m_lockedRegionCounts[_part] > 0; }
 
 	private:
 		void setParametersLocked(const ParameterRegion& _parameterRegion, uint8_t _part, bool _locked) const;
@@ -33,5 +42,6 @@ namespace pluginLib
 		Controller& m_controller;
 
 		std::array<std::set<std::string>,16> m_lockedRegions;
+		std::array<std::atomic<uint32_t>,16> m_lockedRegionCounts{};
 	};
 }

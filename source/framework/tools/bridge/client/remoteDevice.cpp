@@ -25,6 +25,26 @@ namespace bridgeClient
 	static constexpr uint32_t g_udpTimeout = 5;	// seconds
 	static constexpr uint32_t g_tcpTimeout = 5;	// seconds
 
+	// why a server that answered the discovery cannot be used
+	static std::string describeRefusal(const std::string& _host, const bridgeLib::ServerInfo& _si,
+		const bridgeLib::Error& _err)
+	{
+		const std::string found = "Found a DSPBridge server at " + _host + ", but ";
+
+		if(_err.code != bridgeLib::ErrorCode::WrongProtocolVersion)
+			return found + "it cannot host this plugin: " + _err.msg;
+
+		const auto ours = std::to_string(bridgeLib::g_protocolVersion);
+
+		// current servers refuse another protocol version with an error that does not carry their own version, only a
+		// server that answers with its ServerInfo tells it
+		const std::string versions = _si.protocolVersion
+			? "it uses bridge protocol " + std::to_string(_si.protocolVersion) + " and this plugin uses " + ours
+			: "it uses another bridge protocol than this plugin, which uses " + ours;
+
+		return found + versions + ". Update DSPBridgeServer and the plugins together so that both use the same version.";
+	}
+
 	RemoteDevice::RemoteDevice(const synthLib::DeviceCreateParams& _params, bridgeLib::PluginDesc&& _desc, const std::string& _host/* = {}*/, uint32_t _port/* = 0*/) : Device(_params), m_pluginDesc(std::move(_desc))
 	{
 		getDeviceCreateParams().romHash = baseLib::MD5(getDeviceCreateParams().romData);
@@ -41,6 +61,7 @@ namespace bridgeClient
 
 	float RemoteDevice::getSamplerate() const
 	{
+		std::lock_guard lock(m_cvWaitMutex);
 		return m_deviceDesc.samplerate;
 	}
 
@@ -59,8 +80,7 @@ namespace bridgeClient
 			// if there is no valid connection anymore attempt to grab the latest state that was sent
 			if(!m_connection)
 				return;
-			auto& state = static_cast<bridgeLib::TcpConnection*>(m_connection.get())->getDeviceState();
-			_state.insert(_state.end(), state.state.begin(), state.state.end());
+			m_connection->getLastDeviceState(_state);
 		});
 	}
 
@@ -73,11 +93,13 @@ namespace bridgeClient
 
 	uint32_t RemoteDevice::getChannelCountIn()
 	{
+		std::lock_guard lock(m_cvWaitMutex);
 		return m_deviceDesc.inChannels;
 	}
 
 	uint32_t RemoteDevice::getChannelCountOut()
 	{
+		std::lock_guard lock(m_cvWaitMutex);
 		return m_deviceDesc.outChannels;
 	}
 
@@ -92,31 +114,37 @@ namespace bridgeClient
 
 	uint32_t RemoteDevice::getDspClockPercent() const
 	{
+		std::lock_guard lock(m_cvWaitMutex);
 		return m_deviceDesc.dspClockPercent;
 	}
 
 	uint64_t RemoteDevice::getDspClockHz() const
 	{
+		std::lock_guard lock(m_cvWaitMutex);
 		return m_deviceDesc.dspClockHz;
 	}
 
 	uint32_t RemoteDevice::getInternalLatencyInputToOutput() const
 	{
+		std::lock_guard lock(m_cvWaitMutex);
 		return m_deviceDesc.latencyInToOut;
 	}
 
 	uint32_t RemoteDevice::getInternalLatencyMidiToOutput() const
 	{
+		std::lock_guard lock(m_cvWaitMutex);
 		return m_deviceDesc.latencyMidiToOut;
 	}
 
 	void RemoteDevice::getPreferredSamplerates(std::vector<float>& _dst) const
 	{
+		std::lock_guard lock(m_cvWaitMutex);
 		_dst = m_deviceDesc.preferredSamplerates;
 	}
 
 	void RemoteDevice::getSupportedSamplerates(std::vector<float>& _dst) const
 	{
+		std::lock_guard lock(m_cvWaitMutex);
 		_dst = m_deviceDesc.supportedSamplerates;
 	}
 
@@ -188,6 +216,15 @@ namespace bridgeClient
 		});
 	}
 
+	void RemoteDevice::onHostTransport(const synthLib::SMidiEvent& _ev)
+	{
+		// The device on the server follows the host with it, its arpeggiator for example
+		safeCall([&]
+		{
+			return m_connection->send(_ev);
+		});
+	}
+
 	bool RemoteDevice::safeCall(const std::function<bool()>& _func, const std::function<void()>& _onFail/* = [] {}*/)
 	{
 		if(!isValid())
@@ -221,10 +258,17 @@ namespace bridgeClient
 
 		if(_host.empty() || !_port)
 		{
+			// reported instead of "No server found" if a server answered but none can be used
+			std::string refusal;
+
 			UdpClient udpClient(m_pluginDesc, [&](const std::string& _hostname, const bridgeLib::ServerInfo& _si, const bridgeLib::Error& _err)
 			{
 				if(_err.code != bridgeLib::ErrorCode::Ok)
+				{
+					std::unique_lock lock(m_cvWaitMutex);
+					refusal = describeRefusal(_hostname, _si, _err);
 					return;
+				}
 				{
 					std::unique_lock lock(m_cvWaitMutex);
 					si = _si;
@@ -240,7 +284,7 @@ namespace bridgeClient
 				return si.protocolVersion == bridgeLib::g_protocolVersion;
 			}))
 			{
-				throw synthLib::DeviceException(synthLib::DeviceError::RemoteUdpConnectFailed, "No server found");
+				throw synthLib::DeviceException(synthLib::DeviceError::RemoteUdpConnectFailed, refusal.empty() ? "No server found" : refusal);
 			}
 		}
 		else

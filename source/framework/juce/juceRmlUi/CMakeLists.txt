@@ -23,6 +23,8 @@ set(SOURCES
 	rmlElemList.cpp rmlElemList.h
 	rmlElemListEntry.cpp rmlElemListEntry.h
 	rmlElemSplitter.cpp rmlElemSplitter.h
+	rmlElemStrokes.cpp rmlElemStrokes.h
+	rmlLuaStrokes.cpp rmlLuaStrokes.h
 	rmlElemTree.cpp rmlElemTree.h
 	rmlElemTreeNode.cpp rmlElemTreeNode.h
 	rmlElemValue.cpp rmlElemValue.h
@@ -36,11 +38,13 @@ set(SOURCES
 	rmlListEntry.cpp rmlListEntry.h
 	rmlMenu.cpp rmlMenu.h
 	rmlPopupWindow.cpp rmlPopupWindow.h
+	rmlPressSwallower.cpp rmlPressSwallower.h
 	rmlRendererProxy.cpp rmlRendererProxy.h
 	rmlRendererJuce.cpp rmlRendererJuce.h
 	rmlShaders.h
 	rmlSystemFonts.cpp rmlSystemFonts.h
 	rmlSystemInterface.cpp rmlSystemInterface.h
+	rmlTooltips.cpp rmlTooltips.h
 	rmlTree.cpp rmlTree.h
 	rmlTreeNode.cpp rmlTreeNode.h
 

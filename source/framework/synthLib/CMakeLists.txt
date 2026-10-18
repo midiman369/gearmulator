@@ -1,28 +1,29 @@
 cmake_minimum_required(VERSION 3.10)
 project(synthLib)
 
-set(SYNTHLIB_DEMO_MODE OFF CACHE BOOL "Demo Mode" FORCE)
-
-configure_file(${CMAKE_CURRENT_SOURCE_DIR}/buildconfig.h.in ${CMAKE_CURRENT_SOURCE_DIR}/buildconfig.h)
-
 add_library(synthLib STATIC)
 
 set(SOURCES
 	midi/songReset.h midi/songReset.cpp
 	midi/midiFile.h midi/smfReader.cpp midi/rcpDecoder.cpp midi/rcpInternal.h midi/rcpTrack.cpp midi/rcpTempo.cpp
 	analog/analogFilter.cpp analog/analogFilter.h
+	arpeggiator.cpp arpeggiator.h
 	audiobuffer.cpp audiobuffer.h
 	audioTypes.h
-	buildconfig.h buildconfig.h.in
+	consoleTools.cpp consoleTools.h
 	dac.cpp dac.h
 	dcFilter.h
 	device.cpp device.h
 	deviceException.cpp deviceException.h
 	deviceTypes.h
+	dspClockDevice.h
+	frontPanelSysex.cpp frontPanelSysex.h
+	lcdfonts.cpp lcdfonts.h
 	lv2PresetExport.cpp lv2PresetExport.h
 	midiBufferParser.cpp midiBufferParser.h
 	midiClock.cpp midiClock.h
 	midiControllerThinner.cpp midiControllerThinner.h
+	midiInputQueue.h
 	midiRateLimiter.cpp midiRateLimiter.h
 	midiRoutingMatrix.cpp midiRoutingMatrix.h
 	midiToSysex.cpp midiToSysex.h
@@ -77,6 +78,11 @@ set_property(TARGET synthLib PROPERTY FOLDER "Gearmulator")
 target_include_directories(synthLib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 
 if(BUILD_TESTING)
+	add_executable(arpeggiator_test arpeggiator_test.cpp)
+	target_link_libraries(arpeggiator_test PRIVATE synthLib)
+	set_property(TARGET arpeggiator_test PROPERTY FOLDER "Tests")
+	add_test(NAME arpeggiator COMMAND arpeggiator_test)
+
 	add_executable(dcFilter_test dcFilter_test.cpp)
 	target_link_libraries(dcFilter_test PRIVATE synthLib)
 	set_property(TARGET dcFilter_test PROPERTY FOLDER "Tests")
@@ -87,15 +93,31 @@ if(BUILD_TESTING)
 	set_property(TARGET dynamicSamplerate_test PROPERTY FOLDER "Tests")
 	add_test(NAME dynamicSamplerate COMMAND dynamicSamplerate_test)
 
+	add_executable(resamplerLatency_test resamplerLatency_test.cpp)
+	target_link_libraries(resamplerLatency_test PRIVATE synthLib)
+	set_property(TARGET resamplerLatency_test PROPERTY FOLDER "Tests")
+	add_test(NAME resamplerLatency COMMAND resamplerLatency_test)
+
 	add_executable(midiRateLimiter_test midiRateLimiter_test.cpp)
 	target_link_libraries(midiRateLimiter_test PRIVATE synthLib)
 	set_property(TARGET midiRateLimiter_test PROPERTY FOLDER "Tests")
 	add_test(NAME midiRateLimiter COMMAND midiRateLimiter_test)
 
+	add_executable(midiBufferParser_test midiBufferParser_test.cpp)
+	target_link_libraries(midiBufferParser_test PRIVATE synthLib)
+	set_property(TARGET midiBufferParser_test PROPERTY FOLDER "Tests")
+	add_test(NAME midiBufferParser COMMAND midiBufferParser_test)
+
 	add_executable(midiControllerThinner_test midiControllerThinner_test.cpp)
 	target_link_libraries(midiControllerThinner_test PRIVATE synthLib)
 	set_property(TARGET midiControllerThinner_test PROPERTY FOLDER "Tests")
 	add_test(NAME midiControllerThinner COMMAND midiControllerThinner_test)
+
+	add_executable(midiInputQueue_test midiInputQueue_test.cpp)
+	target_link_libraries(midiInputQueue_test PRIVATE synthLib)
+	set_property(TARGET midiInputQueue_test PROPERTY FOLDER "Tests")
+	add_test(NAME midiInputQueue COMMAND midiInputQueue_test)
+	set_tests_properties(midiInputQueue PROPERTIES TIMEOUT 30)
 
 	add_executable(device_test device_test.cpp)
 	target_link_libraries(device_test PRIVATE synthLib)

@@ -1,16 +1,20 @@
 #include "pluginProcessor.h"
 
+#include "pluginEditor.h"
 #include "pluginEditorState.h"
 #include "pluginEditorWindow.h"
 
+#include "patchmanager/patchmanager.h"
+
 #include "baseLib/binarystream.h"
 
-#include "synthLib/os.h"
+#include "juceUiLib/messageBox.h"
 
 #include <cstring>
 
-#include "mcpServerLib/mcpPluginServer.h"
-#include "mcpDomTools.h"
+#include "mcpPluginServer.h"
+#include "mcpEditorTools.h"
+#include "mcpServerLib/mcpDomTools.h"
 #include "mcpPatchManagerTools.h"
 #include "networkLib/logging.h"
 
@@ -31,42 +35,6 @@ namespace jucePluginEditorLib
 		}
 #endif
 
-		// True when the plugin DLL is hosted by a JUCE build-time helper
-		// (juce_vst3_helper / juce_lv2_helper / juce_au_helper). Those exes
-		// load the plugin only to enumerate metadata; they do not run an audio
-		// host and have no use for the MCP server. Starting it there is pure
-		// overhead and was provoking a port-13710 race that crashed n2x builds.
-		bool isJuceHelperProcess()
-		{
-			// hostApplicationPath, not currentExecutableFile: inside a plugin the latter is the module JUCE
-			// itself lives in - our own .dll/.so - so the comparison below could never match and every helper
-			// went on starting a server. hostApplicationPath is the process, which is what we are asking about.
-			const auto exeName = juce::File::getSpecialLocation(
-				juce::File::hostApplicationPath).getFileNameWithoutExtension().toLowerCase();
-			return exeName.contains("juce_vst3_helper")
-				|| exeName.contains("juce_lv2_helper")
-				|| exeName.contains("juce_au_helper");
-		}
-
-		std::string getPluginFormatName(const juce::AudioProcessor::WrapperType _wrapperType, const std::string& _moduleFilePath)
-		{
-			switch (_wrapperType)
-			{
-			case juce::AudioProcessor::wrapperType_VST:         return "vst2";
-			case juce::AudioProcessor::wrapperType_VST3:        return "vst3";
-			case juce::AudioProcessor::wrapperType_AudioUnit:   return "au";
-			case juce::AudioProcessor::wrapperType_AudioUnitv3: return "auv3";
-			case juce::AudioProcessor::wrapperType_LV2:         return "lv2";
-			case juce::AudioProcessor::wrapperType_Standalone:  return "standalone";
-			case juce::AudioProcessor::wrapperType_AAX:         return "aax";
-			case juce::AudioProcessor::wrapperType_Undefined:
-			default:
-				// CLAP reports as wrapperType_Undefined, detect from module file path
-				if (_moduleFilePath.find(".clap") != std::string::npos)
-					return "clap";
-				return {};
-			}
-		}
 	}
 
 	Processor::Processor(const BusesProperties& _busesProperties, const juce::PropertiesFile::Options& _configOptions, const pluginLib::Processor::Properties& _properties)
@@ -77,7 +45,18 @@ namespace jucePluginEditorLib
 #ifdef ZYNTHIAN
 		Logging::setLogFunc(&noLoggingFunc);
 #endif
-		savePluginLoadPath();
+		// The path each format was loaded from used to be written into the config for the plugin
+		// manager to read, which it never did - it looks on disk instead. A key left behind would
+		// only get staler, so it is swept out when one is found. getAllKeys() hands out a reference
+		// to the live array that removeValue() erases from, which would leave the loop reading past
+		// its end, so the sweep runs over a copy of the keys.
+		const auto keys = m_config.getAllProperties().getAllKeys();
+
+		for (const auto& key : keys)
+		{
+			if (key.startsWith("pluginPath_"))
+				m_config.removeValue(key);
+		}
 
 		loadGlobalSkinVariables();
 
@@ -87,8 +66,28 @@ namespace jucePluginEditorLib
 
 		if (resamplerMode >= 0 && resamplerMode < static_cast<int>(synthLib::Resampler::Mode::Count))
 			setResamplerMode(static_cast<synthLib::Resampler::Mode>(resamplerMode));
+	}
 
-		if (m_config.getBoolValue("enableMcpServer", false) && !isJuceHelperProcess())
+	juce::PropertiesFile::Options Processor::legacyConfigOptions(const char* _appName)
+	{
+		juce::PropertiesFile::Options opts;
+		opts.applicationName = _appName;
+		opts.filenameSuffix = ".settings";
+		opts.folderName = _appName;
+		opts.osxLibrarySubFolder = juce::String("Application Support/") + _appName;
+		return opts;
+	}
+
+	void Processor::finishConstruction()
+	{
+		getController();
+		setLatencyBlocks(static_cast<uint32_t>(m_config.getIntValue("latencyBlocks", static_cast<int>(getDefaultLatencyBlocks()))));
+
+		// Last: a client calls tools on the server thread as soon as the discovery file lists this instance. Started
+		// in the base constructor, a set_plugin_state ran while the product constructor still created the controller.
+		// Not in the JUCE build helpers: they load the plugin only to read its properties, and two of them building in
+		// parallel raced for port 13710, the loser crashed the build
+		if (m_config.getBoolValue("enableMcpServer", false) && !genericUI::MessageBox::isHeadlessHost())
 			startMcpServer();
 	}
 
@@ -96,6 +95,7 @@ namespace jucePluginEditorLib
 	{
 		stopMcpServer();
 		assert(!m_editorState && "call destroyEditorState in destructor of derived class");
+		assert(!m_patchManager && "call destroyPatchManager in destructor of derived class");
 	}
 
 	void Processor::loadGlobalSkinVariables()
@@ -199,9 +199,27 @@ namespace jucePluginEditorLib
 		return window;
 	}
 
+	// FinalProcessor's destructor calls this first after the MCP server is off, so this is where teardown begins: the
+	// MIDI inputs stop calling in before the editor, the patch manager, the controller and the device go away
 	void Processor::destroyEditorState()
 	{
+		stopMcpServer();
+		shutdown();
 		m_editorState.reset();
+	}
+
+	void Processor::setPatchManager(patchManager::PatchManager* _patchManager)
+	{
+		m_patchManager.reset(_patchManager);
+	}
+
+	void Processor::destroyPatchManager()
+	{
+		// before the derived patch manager is destroyed: the host may delete the plugin on another thread than the
+		// message thread, which may be in the middle of processPending()
+		if(m_patchManager)
+			m_patchManager->shutdown();
+		m_patchManager.reset();
 	}
 
 	void Processor::saveChunkData(baseLib::BinaryStream& s)
@@ -220,6 +238,15 @@ namespace jucePluginEditorLib
 			s.write(m_editorStateData);
 		}
 
+		if(m_patchManager)
+		{
+			std::vector<uint8_t> patchManagerData;
+			m_patchManager->getPerInstanceConfig(patchManagerData);
+
+			baseLib::ChunkWriter cw(s, "PMST", 1);
+			s.write(patchManagerData);
+		}
+
 		getController().saveChunkData(s);
 	}
 
@@ -227,7 +254,10 @@ namespace jucePluginEditorLib
 	{
 		// if there is no chunk in the data, but the data is not empty, it's an old non-Vavra chunk that only carries the editor state
 		if(!pluginLib::Processor::loadCustomData(_sourceBuffer))
+		{
 			m_editorStateData = _sourceBuffer;
+			migratePatchManagerState(m_editorStateData);
+		}
 
 		if(m_editorState)
 			m_editorState->setPerInstanceConfig(m_editorStateData);
@@ -242,32 +272,57 @@ namespace jucePluginEditorLib
 		_cr.add("EDST", 1, [this](baseLib::BinaryStream& _binaryStream, unsigned _version)
 		{
 			_binaryStream.read(m_editorStateData);
+			migratePatchManagerState(m_editorStateData);
+		});
+
+		// saved after EDST, so it wins over a patch manager state migrated from there
+		_cr.add("PMST", 1, [this](baseLib::BinaryStream& _binaryStream, unsigned _version)
+		{
+			std::vector<uint8_t> patchManagerData;
+			_binaryStream.read(patchManagerData);
+			if(m_patchManager)
+				m_patchManager->setPerInstanceConfig(patchManagerData);
 		});
 
 		getController().loadChunkData(_cr);
 	}
 
-	void Processor::savePluginLoadPath()
+	void Processor::migratePatchManagerState(const std::vector<uint8_t>& _editorStateData) const
 	{
-		const auto moduleFilePath = synthLib::getModuleFilePath();
-		if (moduleFilePath.empty())
+		// the editor state carried the patch manager state before the processor owned the patch manager
+		if(!m_patchManager || _editorStateData.size() < sizeof(uint32_t))
 			return;
 
-		const auto format = getPluginFormatName(wrapperType, moduleFilePath);
-		if (format.empty())
+		// an old version that didn't use chunks yet
+		baseLib::BinaryStream oldStream(_editorStateData);
+		if(oldStream.read<uint32_t>() == 1)
+		{
+			m_patchManager->setPerInstanceConfig(_editorStateData);
 			return;
+		}
 
-		const auto key = "pluginPath_" + format;
-		getConfig().setValue(juce::String(key), juce::String(moduleFilePath));
-		getConfig().saveIfNeeded();
+		baseLib::BinaryStream s(_editorStateData);
+		baseLib::ChunkReader cr(s);
+		cr.add("pmDt", 2, [this](baseLib::BinaryStream& _s, uint32_t/* _version*/)
+		{
+			std::vector<uint8_t> data;
+			_s.read(data);
+			m_patchManager->setPerInstanceConfig(data);
+		});
+		cr.read();
 	}
 
 	juce::File Processor::initConfigFile(const juce::PropertiesFile::Options& _o) const
 	{
+		juce::File newFile(getConfigFile(false));
+
+		// Without options there never was an old location. Their default file is a folder outside the product's own,
+		// and on macOS asking for it asserts
+		if(_o.applicationName.isEmpty())
+			return newFile;
+
 		// copy from old location to new if still exists
 		juce::File oldFile(_o.getDefaultFile());
-
-		juce::File newFile(getConfigFile(false));
 
 		if(oldFile.existsAsFile())
 		{
@@ -288,7 +343,15 @@ namespace jucePluginEditorLib
 		try
 		{
 			m_mcpServer = std::make_unique<mcpServer::McpPluginServer>(*this);
-			registerDomTools(m_mcpServer->getServer(), *this);
+			// The DOM tools work on whatever component holds the document, which here is the editor -
+			// and it may be closed and opened again while the server keeps running.
+			mcpServer::registerDomTools(m_mcpServer->getServer(), [this]() -> juceRmlUi::RmlComponent*
+			{
+				auto* editorState = getEditorState();
+				auto* editor = editorState ? editorState->getEditor() : nullptr;
+				return editor ? editor->getRmlComponent() : nullptr;
+			});
+			registerEditorTools(m_mcpServer->getServer(), *this);
 			registerPatchManagerTools(m_mcpServer->getServer(), *this);
 			if (m_mcpServer->start())
 			{

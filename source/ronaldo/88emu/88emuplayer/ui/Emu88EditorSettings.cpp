@@ -305,6 +305,14 @@ namespace emu88Player
                        m_processor.config().saveIfNeeded();
                    });
 
+        // Read by the device menu each time it opens.
+        wireToggle("btHideDevicesWithoutRoms", m_processor.config().getBoolValue("hideDevicesWithoutRoms", false),
+                   [this](const bool _enabled)
+                   {
+                       m_processor.config().setValue("hideDevicesWithoutRoms", _enabled);
+                       m_processor.config().saveIfNeeded();
+                   });
+
         // Both are taken up by the next device load, Power on or Restart.
         wireToggle("btFactoryResetOnLoad", m_processor.bootOptions().factoryReset,
                    [this](const bool _enabled)
@@ -472,16 +480,19 @@ namespace emu88Player
         if (!folder.isDirectory())
             folder = juce::File::getSpecialLocation(juce::File::userHomeDirectory);
         // Card dumps carry no agreed extension, so every file is offered.
-        m_pcmCardChooser = std::make_unique<juce::FileChooser>("Select CM-32P / CM-64 PCM card image", folder, "*", true);
+        genericUI::MessageBox::FileDialogDesc desc;
+        desc.title = "Select CM-32P / CM-64 PCM card image";
+        desc.initialPath = folder.getFullPathName().toStdString();
+        desc.patterns = "*";
+        desc.flags = juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles;
         const juce::WeakReference<Editor> safeThis(this);
-        m_pcmCardChooser->launchAsync(juce::FileBrowserComponent::openMode |
-                                          juce::FileBrowserComponent::canSelectFiles,
-                                      [safeThis](const juce::FileChooser& _chooser)
+        m_pcmCardChooser = genericUI::MessageBox::showFileDialog(desc,
+                                      [safeThis](const std::vector<std::string>& _files)
                                       {
                                           auto* editor = safeThis.get();
                                           if (!editor)
                                               return;
-                                          const auto file = _chooser.getResult();
+                                          const auto file = _files.empty() ? juce::File() : juce::File(_files.front());
                                           if (file != juce::File())
                                               editor->applyPcmCardPath(file.getFullPathName().toStdString());
                                           editor->m_pcmCardChooser.reset();

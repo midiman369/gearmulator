@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Gearmulator is a low-level IC emulator that recreates classic virtual analog synthesizers (Access Virus, Waldorf microQ/XT, Clavia Nord Lead 2x, Roland JP-8000) by emulating original DSP56300, MC68K and H8S processors and running authentic firmware ROMs as audio plugins (FST, VST3, AU, CLAP, LV2).
+Gearmulator is a low-level IC emulator that recreates classic virtual analog synthesizers (Access Virus, Waldorf microQ/XT, Clavia Nord Lead 2x, Roland JP-8000/JP-8080) by emulating original DSP56300, MC68K and H8/300H processors and running authentic firmware ROMs as audio plugins (FST, VST3, AU, CLAP, LV2).
 
 The project emphasises **accuracy of emulation over shortcuts** — the goal is to run original firmware bit-identically to hardware.
 
@@ -58,7 +58,7 @@ codenames to stay clear of trademarks (`ronaldo` = Roland, and so on).
 source/
 ├── cmake/        build glue: juce.cmake, skins.cmake, base.cmake, xcodeversion.cmake, …
 ├── 3rdparty/     everything not written by us — see source/3rdparty/README.md
-├── cpu/          processor cores: dsp56300, mc68k, h8s
+├── cpu/          processor cores: dsp56300, mc68k, h8300h (+ common/ bus, scheduler)
 ├── framework/    synth-agnostic code
 │   ├── baseLib/ synthLib/ hardwareLib/ networkLib/
 │   ├── juce/     jucePluginLib, jucePluginEditorLib, juceRmlUi, juceRmlPlugin,
@@ -83,17 +83,17 @@ includes like `../../foo/bar.h` — they break the next time anything moves.
 
 ## Architecture
 
-**Emulation stack:** DSP56300 emulator (`source/cpu/dsp56300/`, JIT via asmjit; peripherals ESAI and HDI08) + MC68K emulator (`source/cpu/mc68k/`, Musashi) + H8S core (`source/cpu/h8s/`). Each synth has a device library that loads firmware ROMs, initializes processor memory, and handles MIDI/audio via HDI08.
+**Emulation stack:** DSP56300 emulator (`source/cpu/dsp56300/`, JIT via asmjit; peripherals ESAI and HDI08) + MC68K emulator (`source/cpu/mc68k/`, Musashi) + H8/300H core (`source/cpu/h8300h/`, on the `source/cpu/common/` bus and scheduler). Each synth has a device library that loads firmware ROMs, initializes processor memory, and handles MIDI/audio via HDI08.
 
 **Per-synth pattern:**
 | Emulator | Hardware | Device Lib | Plugin Dir |
 |---|---|---|---|
 | Osirus | Virus A/B/C | `axel/virusLib/` | `axel/osirusJucePlugin/` |
 | OsTIrus | Virus TI/TI2/Snow | `axel/virusLib/` | `axel/osTIrusJucePlugin/` |
-| Vavra | Waldorf microQ | `waldi/microq/mqLib/` | `waldi/microq/mqJucePlugin/` |
+| Vavra | Waldorf microQ | `waldi/common/mqLib/` | `waldi/microq/mqJucePlugin/` |
 | Xenia | Waldorf MW II/XT | `waldi/xt/xtLib/` | `waldi/xt/xtJucePlugin/` |
 | Nodal Red 2x | Nord Lead/Rack 2x | `claudia/n2x/n2xLib/` | `claudia/n2x/n2xJucePlugin/` |
-| JE-8086 | Roland JP-8000 | `ronaldo/je8086/jeLib/` | `ronaldo/je8086/jeJucePlugin/` |
+| JE-8086 | Roland JP-8000 / JP-8080 | `ronaldo/je8086/jeLib/` | `ronaldo/je8086/jeJucePlugin/` |
 | DSPBridge | Network bridge | `framework/tools/bridge/` | — |
 
 Shared per-manufacturer code: `waldi/common/wLib/` (microQ + XT), `ronaldo/common/` and `ronaldo/custom_chips/` (Roland).
@@ -162,7 +162,7 @@ Responsibilities: load firmware ROM, initialize DSP/CPU memory, handle MIDI via 
 3. **Shared plugin infra** → `source/framework/juce/jucePluginLib/` or `source/framework/synthLib/`
 4. **DSP emulator** → `source/cpu/dsp56300/source/dsp56kEmu/`
 5. **New parameter** → update `parameterDescriptions_*.json` in the plugin dir, map to MIDI CC/SysEx in the processor, update skin RML if it should appear in the UI
-6. **New synth or FX product** → follow `doc/adding_a_product.md` end to end: MIDI-only controller/device contract, identifiers, CMake, CI, deploy folder, Discord, YouTrack, website, checklist
+6. **New synth or FX product** → follow the "Adding a Product" pages in the team wiki end to end: MIDI-only controller/device contract, identifiers, CMake, CI, deploy folder, wiki pages, YouTrack, website, checklist
 
 Test with the test consoles before building full plugins.
 
@@ -200,11 +200,13 @@ Unit tests: `source/framework/tools/midiLearnTest/midiLearnTest.cpp`.
 
 ## Patch Manager & Program Change Routing
 
+The **processor owns the patch manager** (`jucePluginEditorLib::Processor::setPatchManager`, since BUG-10425), so it works whether an editor is ever opened or not; an editor only shows it (`attachUi`). Core: `pluginLib::patchManager::PatchManager` in `framework/juce/jucePluginLib/patchmanager/`, product base: `jucePluginEditorLib::patchManager::PatchManager`. Never assume an editor in a patch manager: `getEditor()` is nullptr while none shows it. Delete it only through `destroyPatchManager()`, which calls `shutdown()` first: a host may delete the plugin on another thread than the message thread (LV2 on Linux), and the timer must not run `processPending()` into a half destroyed product class. Architecture, routing, the fast path hooks and the **merge guide for device branches**: team wiki, Devices › Framework (all devices) › Technical Documentation › "Patch Manager (owned by the processor, merge guide)". Tests: `framework/tools/jucePluginLibTests/patchManagerTest.cpp`.
+
 **PatchDB** (`framework/juce/jucePluginLib/patchdb/`) is thread-safe via `shared_mutex`. A `DataSource` is a folder, file, local storage or ROM bank, and can carry a `midiBankNumber` for program change routing. Assignments persist in `patchmanagerdb.json` under `midiBankAssignments`, kept separate from `datasources` because ROM sources are not in that array. An assignment referencing a not-yet-loaded ROM source is held in `m_pendingMidiBankAssignments` and applied on `addDataSource()`.
 
-**Program change router** (`framework/juce/jucePluginLib/programChangeRouter.*`) tracks per-channel bank select (CC#0 MSB + CC#32 LSB). Bank Select CCs pass through to the device; only Program Change is consumed, and only when a bank is assigned. Two-stage for thread safety: the audio thread does a read-only `HasBankFunc` check under `shared_lock` and queues a `ProgramChangeRequest`; the UI thread drains it via `callAsync`. Gated by `m_midiRoutingMatrix.enabled(_ev, MidiEventSource::Device)`, and wired in `Processor::addMidiEvent()` after MIDI Learn, before device routing.
+**Program change router** (`framework/juce/jucePluginLib/programChangeRouter.*`) tracks per-channel bank select (CC#0 MSB + CC#32 LSB, MIDI bank = MSB × 128 + LSB); bank selects pass through to the device. A Program Change for a bank with a data source goes to the patch manager: either the product's `createProgramChangeEvents()` replaces it, on the receiving (audio) thread, with the events that load the patch, so MIDI behind it applies to the new patch; or it is held, with all device-bound MIDI behind it, until the message thread loaded the patch with `activatePatch()` (released after 1000 ms at the latest). Of several in a row only the last one loads. Gated by `m_midiRoutingMatrix.enabled(_ev, MidiEventSource::Device)`, and wired in `Processor::addMidiEvent()` after MIDI Learn, before device routing.
 
-**ROM data sources:** only Osirus/OsTIrus and JE8086 register ROM data sources with the patch manager. Vavra, Xenia and NodalRed2x do not (uninitialized flash or no ROM presets). ROM sources get sequential default `midiBankNumber`s; user assignments from JSON override them on reload.
+**ROM data sources:** only Osirus/OsTIrus and JE8086 register ROM data sources with the patch manager. Vavra, Xenia and NodalRed2x do not (uninitialized flash or no ROM presets). ROM sources get sequential default `midiBankNumber`s; user assignments from JSON override them on reload. A data source refreshed in place (`refreshDataSource()`, the Virus RAM banks) keeps its MIDI bank number. A ROM bank removed and registered again gets its number back, per ROM: `DataSource::romName` (the Virus sets it on its ROM banks and ROM arrangements) is part of the assignment's key, saved as `rom` in `midiBankAssignments`; an entry without `rom` goes to the first ROM that registers the bank (EMU-228). Any other data source removed and added again loses its number.
 
 **callAsync safety pattern** — guard against use-after-free with a static instance set:
 ```cpp

@@ -7,6 +7,8 @@
 #include "juceRmlUi/rmlDataProvider.h"
 #include "juceRmlUi/rmlInterfaces.h"
 
+#include "juceUiLib/messageBox.h"
+
 #include "juce_audio_plugin_client/Standalone/juce_StandaloneOptionsMenuHandler.h"
 #include "juce_audio_processors/juce_audio_processors.h"
 
@@ -26,6 +28,7 @@ namespace emu88Player
 	class AboutWindow;
 	class KeyboardWindow;
 	class RomRequirementsWindow;
+	class PartEditorWindow;
 
 	// One line of the keyboard help: the key or key pair, and the panel legend.
 	struct KeyboardShortcut { std::string keys, label; };
@@ -58,6 +61,9 @@ namespace emu88Player
 		void updateFromDevice();
 		juceRmlUi::RmlComponent* rmlComponent() const { return m_rml.get(); }
 
+		// Opens the part editor window, or brings it to the front; false closes it.
+		void showPartEditor(bool _show);
+
 	private:
 		friend class SettingsWindow;
 		friend class AboutWindow;
@@ -86,6 +92,8 @@ namespace emu88Player
 		void destroyRmlUi();
 		void wirePanel();
 		void pressPowerKey(bool _supply);
+		// A key for the MV-30's panel going down or up (an Rml::Input::KeyIdentifier): whether it is one
+		bool handleMv30Key(int _key, bool _down);
 		void togglePower();
 		void updatePowerVisuals();
 		void chooseMidiFiles();
@@ -122,6 +130,7 @@ namespace emu88Player
 		void showAbout();
 		void showKeyboard();
 		KeyboardShortcutGroups buildKeyboardGroups();
+		static KeyboardShortcutGroups buildMv30KeyboardGroups();
 		void initialiseSettings(const char* _pageId, const char* _buttonId);
 		void selectSettingsPage(const char* _pageId, const char* _buttonId);
 		void populateSkinSettings();
@@ -151,16 +160,17 @@ namespace emu88Player
 		std::unique_ptr<AboutWindow> m_aboutWindow;
 		std::unique_ptr<KeyboardWindow> m_keyboardWindow;
 		std::unique_ptr<RomRequirementsWindow> m_romWindow;
+		std::unique_ptr<PartEditorWindow> m_partEditorWindow;
 		std::unique_ptr<HardwareLcd> m_lcd;
 		// The skin's second display element, which only the CM-64 shows (its LA half's service
 		// screen); null when the skin has no such element.
 		std::unique_ptr<HardwareLcd> m_lcd2;
 		std::unique_ptr<PlaylistDropTarget> m_playlistDropTarget;
 		std::vector<std::unique_ptr<PlaylistRowDrag>> m_playlistRows;
-		std::unique_ptr<juce::FileChooser> m_playlistChooser;
-		std::unique_ptr<juce::FileChooser> m_playlistFileChooser;
-		std::unique_ptr<juce::FileChooser> m_recordingChooser;
-		std::unique_ptr<juce::FileChooser> m_pcmCardChooser;
+		std::unique_ptr<genericUI::MessageBox::FileDialog> m_playlistChooser;
+		std::unique_ptr<genericUI::MessageBox::FileDialog> m_playlistFileChooser;
+		std::unique_ptr<genericUI::MessageBox::FileDialog> m_recordingChooser;
+		std::unique_ptr<genericUI::MessageBox::FileDialog> m_pcmCardChooser;
 		std::unique_ptr<TitleBarButton> m_recordButton;
 		Skin m_skin;
 		std::map<std::string, std::vector<char>> m_fileCache;
@@ -175,6 +185,21 @@ namespace emu88Player
 		uint32_t m_pointerButtons = 0;
 		uint32_t m_keyboardButtons = 0;
 		bool m_powerKeyDown = false;
+		// The MV-30's switches held on the keyboard, bit n = Mv30Button n, and its footswitch, and what was sent
+		uint64_t m_mv30Buttons = 0;
+		// Held with the mouse on the skin's faces
+		uint64_t m_mv30PointerButtons = 0;
+		bool m_mv30Footswitch = false;
+		// The skin's faces and their switches, and its VALUE + and -: the detent a held one repeats, the timer
+		// ticks it has been held, and the dial keys down (bit 0 down, bit 1 up)
+		std::vector<std::pair<Rml::Element*, uint64_t>> m_mv30Elements;
+		Rml::Element* m_mv30IncElement = nullptr;
+		Rml::Element* m_mv30DecElement = nullptr;
+		int m_mv30Repeat = 0;
+		uint32_t m_mv30RepeatTicks = 0;
+		uint8_t m_mv30DialKeys = 0;
+		uint64_t m_mv30SentButtons = 0;
+		bool m_mv30SentFootswitch = false;
 		uint32_t m_sentButtons = 0;
 		uint64_t m_displayRevision = 0;
 		uint64_t m_playlistRevision = ~uint64_t{0};

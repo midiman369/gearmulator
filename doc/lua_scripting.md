@@ -39,6 +39,7 @@ Add a `<script>` block in your RML file's `<head>` section:
 | `document` | ElementDocument | The current RML document. Available in `<script>` blocks and event handlers. |
 | `params` | table | Parameter API for reading/writing synth parameters and subscribing to changes. |
 | `midi` | table | Live note on/off events. |
+| `audio` | table | Levels of the output channels, for meters. |
 | `Log` | table | RmlUi logging. Use `Log.Message(Log.logtype.info, "message")`. |
 | `rmlui` | table | RmlUi core API (contexts, font loading, etc.). |
 
@@ -117,6 +118,35 @@ local id = params.onPartChanged(function(newPart)
   -- newPart: 0-based part number
 end)
 ```
+
+### Lock Regions
+
+The regions of the right-click menu's "Lock Regions" submenu. A locked region keeps its values when
+a patch is loaded into its part.
+
+```lua
+-- All regions, sorted by id like the menu: { {id = "oscA", name = "Oscillator 1"}, ... }
+for _, region in ipairs(params.getRegions()) do
+  Log.Message(Log.logtype.info, region.id .. " = " .. region.name)
+end
+
+-- Query and change a lock; the region is given by its id or by its name as the menu shows it
+local locked = params.isRegionLocked("oscA")        -- current part
+local locked = params.isRegionLocked("Filters", 3)  -- part 3
+params.setRegionLocked("oscA", true)                -- current part
+params.setRegionLocked("Oscillator 1", false, 3)
+
+-- Get told whenever a lock changes, from the menu, from a script or from anywhere else
+local id = params.onRegionLockChanged(function(regionId, locked, part)
+  -- regionId: the region's id even if it was locked by name
+  -- part:     0-based, for every part, not only the current one
+end)
+params.removeListener(id)
+```
+
+A region that is not known raises a Lua error. Some regions combine others, such as `filters`:
+locking it locks the parameters of its subregions, but `isRegionLocked("filterA")` stays false,
+the same way the menu shows it.
 
 ## Frame Events (Animation)
 
@@ -197,6 +227,35 @@ can touch the DOM directly. A skin that registers no note callbacks costs nothin
 Only note on and note off are reported. Control changes, pitch bend and aftertouch are not,
 because a mod wheel or an automation lane produces them by the thousand and a skin cannot keep
 up with that on the UI thread.
+
+## Output Levels (`audio`)
+
+Levels of the plugin's output channels, for meters:
+
+```lua
+local count = audio.getOutputCount()        -- number of output channels, 0 before audio was processed
+local peak, rms = audio.getOutputLevel(0)   -- channel 0, the first output's left channel
+```
+
+Both levels are linear, 1.0 is full scale (`20 * math.log(peak, 10)` gives dBFS). The peak holds
+the highest sample and then falls by 20 dB in 1.5 seconds; the RMS is averaged over about 300 ms.
+A channel that does not exist returns `nil`. Channels count from 0 across all outputs, two per
+stereo output, so a part routed to its own output is metered there.
+
+Read them from a frame event, which runs once per rendered frame:
+
+```lua
+function onFrame(event)
+  local peak, rms = audio.getOutputLevel(0)
+  if peak then
+    document:GetElementById("meterL").style.width = tostring(math.floor(peak * 300)) .. "dp"
+  end
+end
+```
+
+Levels are only measured while a skin reads them: the first `getOutputLevel` call turns the
+measurement on, so the levels start to move with the next audio block. A skin that never calls it
+costs nothing on the audio thread.
 
 ## Skin Variables (`skinvars`)
 

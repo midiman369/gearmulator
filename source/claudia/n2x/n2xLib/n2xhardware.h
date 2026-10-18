@@ -5,7 +5,10 @@
 #include "n2xrom.h"
 
 #include "synthLib/audioTypes.h"
+#include "synthLib/midiInputQueue.h"
 #include "synthLib/midiTypes.h"
+
+#include "dsp56kBase/sharedaudioreducer.h"
 
 namespace n2x
 {
@@ -38,6 +41,9 @@ namespace n2x
 		bool getButtonState(ButtonType _type) const;
 		void setButtonState(ButtonType _type, bool _pressed);
 
+		// Presses SHIFT, then _button while SHIFT is held, the way the hardware is played. Panic is SHIFT + FilterDist
+		void pressShiftCombination(ButtonType _button);
+
 		uint8_t getKnobPosition(KnobType _knob) const;
 		void setKnobPosition(KnobType _knob, uint8_t _value);
 
@@ -48,22 +54,41 @@ namespace n2x
 		const std::string& getRomFilename() const { return m_rom.getFilename(); }
 
 	private:
+		// The four DAC words of a frame, sign extended
+		using MixFrame = std::array<int32_t, 4>;
+
+		struct MixReduce
+		{
+			void operator()(MixFrame& _dst, const MixFrame& _src) const
+			{
+				for(size_t i=0; i<_dst.size(); ++i)
+					_dst[i] += _src[i];
+			}
+		};
+
 		void ensureBufferSize(uint32_t _frames);
-		void onEsaiCallbackA();
+		void initMixer();
+		void onMixedFrame(const MixFrame& _frame);
 		void processMidiInput();
 		void onEsaiCallbackB();
 		void syncUCtoDSP();
 		void ucThreadFunc();
 		void advanceSamples(uint32_t _samples, uint32_t _latency);
+		void processShiftCombination(uint32_t _frames);
 
 		Rom m_rom;
 		Microcontroller m_uc;
 		DSP m_dspA;
 		DSP m_dspB;
 
-		std::vector<dsp56k::TWord> m_dummyInput;
-		std::vector<dsp56k::TWord> m_dummyOutput;
-		std::vector<dsp56k::TWord> m_dspAtoBBuffer;
+		// On the hardware, DSP B receives the four slots of DSP A and passes them unchanged to its outputs. Here both
+		// DSPs run side by side, DSP B gets silence, and their frames are added and saturated as DSP B does it. Each
+		// DSP may run at most MixerCapacity frames ahead of the other (EMU-61)
+		static constexpr uint32_t MixerCapacity = 16;
+		dsp56k::SharedAudioReducer<MixFrame, MixerCapacity, 2, MixReduce> m_mixer;
+		uint32_t m_mixerLaneA = 0;
+		uint32_t m_mixerLaneB = 0;
+		dsp56k::RingBuffer<std::array<dsp56k::TWord, 4>, dsp56k::Audio::RingBufferSize, true, false> m_mixedOutput;
 
 		AudioOutputs m_audioOutputs;
 
@@ -79,15 +104,12 @@ namespace n2x
 		dsp56k::ConditionVariable m_requestedFramesAvailableCv;
 		size_t m_requestedFrames = 0;
 		bool m_dspHalted = false;
-		dsp56k::SpscSemaphore m_semDspAtoB;
-
-		dsp56k::RingBuffer<dsp56k::Audio::RxFrame, 4, true> m_dspAtoBbuf;
 
 		std::unique_ptr<std::thread> m_ucThread;
 		bool m_destroy = false;
 
 		// Midi
-		dsp56k::RingBuffer<synthLib::SMidiEvent, 16384, true> m_midiIn;
+		synthLib::MidiInputQueue m_midiIn;
 		uint32_t m_midiOffsetCounter = 0;
 
 		// DSP slowdown
@@ -96,5 +118,10 @@ namespace n2x
 		dsp56k::SpscSemaphoreWithCount m_haltDSPSem;
 
 		bool m_bootFinished = false;
+
+		// SHIFT combination: 0 = idle, then SHIFT is down, the button is down, the button is up again
+		uint32_t m_shiftCombinationStep = 0;
+		uint32_t m_shiftCombinationWait = 0;
+		ButtonType m_shiftCombinationButton = ButtonType::Shift;
 	};
 }
