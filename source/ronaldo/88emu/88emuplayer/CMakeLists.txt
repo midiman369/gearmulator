@@ -17,6 +17,8 @@ set(HARDWARE_ASSETS
 	${HARDWARE_SKIN_DIR}/sc88vl_panel.png
 	${HARDWARE_SKIN_DIR}/sc88pro_panel.png
 	${HARDWARE_SKIN_DIR}/sc8850_panel.png
+	${HARDWARE_SKIN_DIR}/sc880_panel.png
+	${HARDWARE_SKIN_DIR}/sc880_overlay.png
 	${HARDWARE_SKIN_DIR}/sc55_panel.png
 	${HARDWARE_SKIN_DIR}/sc55mk2_panel.png
 	${HARDWARE_SKIN_DIR}/sc8820_panel.png
@@ -27,6 +29,7 @@ set(HARDWARE_ASSETS
 	${HARDWARE_SKIN_DIR}/sc88exp_panel.png
 	${HARDWARE_SKIN_DIR}/sc55pc_panel.png
 	${HARDWARE_SKIN_DIR}/mv30_panel.png
+	${HARDWARE_SKIN_DIR}/proe_panel.png
 	${HARDWARE_SKIN_DIR}/mv30_assets.png
 	${HARDWARE_SKIN_DIR}/sc8850_assets.png
 	${HARDWARE_SKIN_DIR}/button_all.svg
@@ -37,6 +40,8 @@ set(HARDWARE_ASSETS
 	${HARDWARE_SKIN_DIR}/button_part_left.svg
 	${HARDWARE_SKIN_DIR}/button_part_right.svg
 	${HARDWARE_SKIN_DIR}/button_plain.svg
+	${HARDWARE_SKIN_DIR}/sc880_key.svg
+	${HARDWARE_SKIN_DIR}/sc880_key_lit.svg
 	${HARDWARE_SKIN_DIR}/preview.svg
 	${HARDWARE_SKIN_DIR}/player_play.svg
 	${HARDWARE_SKIN_DIR}/player_pause.svg
@@ -91,12 +96,12 @@ target_sources(88emuplayer PRIVATE
 	ui/Emu88EditorWindows.h
 	ui/Emu88EditorBindings.h
 	ui/panel.cpp ui/panel.hpp
-	ui/lcd_font.cpp
 )
 removeJuceDependencies(88emuplayer)
 target_link_libraries(88emuplayer PRIVATE
 	88emuplayer_BinaryData
 	88lib
+	hardwareLib
 	jucePlayerLib
 	juceMidiPorts
 	juceRmlUi

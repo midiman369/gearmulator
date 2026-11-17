@@ -3,8 +3,10 @@
 #include <optional>
 
 #include "rmlLuaAudio.h"
+#include "rmlLuaLeds.h"
 #include "rmlLuaMidi.h"
 #include "rmlLuaParameters.h"
+#include "rmlLuaRom.h"
 #include "rmlLuaSkinVariables.h"
 #include "rmlParameterBinding.h"
 #include "rmlPluginContext.h"
@@ -44,6 +46,8 @@ namespace rmlPlugin
 			unregisterLuaSkinVariables(L);
 			unregisterLuaMidi(L);
 			unregisterLuaAudio(L);
+			unregisterLuaLeds(L);
+			unregisterLuaRom(L);
 		}
 
 		Rml::UnregisterPlugin(m_coreInstance, this);
@@ -65,6 +69,8 @@ namespace rmlPlugin
 			registerLuaSkinVariables(L, m_controller, *m_rmlInterfaces);
 			registerLuaMidi(L, m_controller, *m_rmlInterfaces);
 			registerLuaAudio(L, m_controller);
+			registerLuaLeds(L, m_controller);
+			registerLuaRom(L, m_controller, *m_rmlInterfaces);
 		}
 	}
 
@@ -76,6 +82,8 @@ namespace rmlPlugin
 			unregisterLuaSkinVariables(L);
 			unregisterLuaMidi(L);
 			unregisterLuaAudio(L);
+			unregisterLuaLeds(L);
+			unregisterLuaRom(L);
 		}
 
 		m_documentBeingLoaded.reset();

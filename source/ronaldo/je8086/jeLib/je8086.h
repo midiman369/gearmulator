@@ -65,6 +65,10 @@ namespace jeLib
 	private:
 		void onReceiveMidiByte(uint8_t _byte);
 		void onReceiveSample(int32_t _left, int32_t _right);
+		// to the input the event arrives at on the hardware, see m_remoteKeyboardRateLimiter
+		void writeMidiIn(const synthLib::SMidiEvent& _ev);
+		// drops what waits for the part of the temp performance that _sysex replaces as a whole
+		void purgeSuperseded(const synthLib::SysexBuffer& _sysex);
 		// the visible 2 x 20 LCD cells and the CGRAM to the editor
 		void sendLcdText();
 		void sendLcdCgRam();
@@ -100,6 +104,11 @@ namespace jeLib
 		uint32_t m_inputWrite = InputDelay;
 		synthLib::MidiRateLimiter m_midiInRateLimiter;
 
+		// The JP-8080's second MIDI input, REMOTE KBD IN, on SCI1. Only it plays the arpeggiator and RPS, and it handles
+		// what it receives like the front panel. The plugin has one input, so the firmware's Remote KBD CH picks what
+		// goes here, as the JP-8000's Remote Ctrl CH does on its single input
+		synthLib::MidiRateLimiter m_remoteKeyboardRateLimiter;
+
 		// A continuous controller reaches the wire at most this often per channel and
 		// controller: 250 times a second, what a hardware controller sends. A host sends
 		// them as densely as it likes, and the limiter above loses nothing, so a dense
@@ -114,7 +123,7 @@ namespace jeLib
 		synthLib::MidiControllerThinner m_controllerThinner{ControllerIntervalSamples,
 			[this](const synthLib::SMidiEvent& _ev)
 		{
-			m_midiInRateLimiter.write(synthLib::SMidiEvent(_ev));
+			writeMidiIn(_ev);
 		}};
 		uint32_t m_controllerThinnerClock = 0;
 

@@ -82,6 +82,7 @@ namespace juceRmlUi
 		void metalContextCreated(MetalContext& _context) override;
 		void renderMetal(MetalContext& _context) override;
 		void metalContextClosing(MetalContext& _context) override;
+		void metalViewResized(MetalContext& _context) override;
 #endif
 
 		void mouseDown(const juce::MouseEvent& _event) override;
@@ -122,6 +123,7 @@ namespace juceRmlUi
 		void filesDropped(const juce::StringArray& _files, int _x, int _y) override;
 		bool isInterestedInDragSource(const SourceDetails& _dragSourceDetails) override;
 		void itemDragEnter(const SourceDetails& _dragSourceDetails) override;
+		void itemDragMove(const SourceDetails& _dragSourceDetails) override;
 		void itemDragExit(const SourceDetails& _dragSourceDetails) override;
 		void itemDropped(const SourceDetails& _dragSourceDetails) override;
 		bool shouldDropFilesWhenDraggedExternally(const SourceDetails& _sourceDetails, juce::StringArray& _files, bool& _canMoveFiles) override;
@@ -168,6 +170,10 @@ namespace juceRmlUi
 
 		void enableDebugger(bool _enable);
 
+		// Stops the render thread of the GL or Metal context, for an owner that takes the element tree apart before
+		// it destroys this component. Joins that thread, so nothing may hold the access lock: a frame waits for it
+		void stopRendering();
+
 		bool takeScreenshot(const ScreenshotCallback& _callback);
 
 		// Produces one frame synchronously, for a component configured with offlineRendering.
@@ -186,6 +192,8 @@ namespace juceRmlUi
 		Rml::Element* getLastElementByGetComponentAt() const { return m_lastGetComponentAt.get(); }
 
 	private:
+		void updateOpenGLAttachment();
+		void attachOpenGLContext();
 		void update();
 		void createRmlContext(const ContextCreatedCallback& _contextCreatedCallback);
 		void destroyRmlContext();
@@ -245,6 +253,8 @@ namespace juceRmlUi
 		juce::ModifierKeys m_currentModifierKeys;
 
 		bool m_updating = true;
+		// update() runs for metalViewResized(), which draws the frame itself
+		bool m_synchronousFrame = false;
 
 		Rml::Vector2i m_documentSize{0,0};
 		// The body size in dp and the dp ratio m_documentSize was measured at, to tell a size the skin changed
@@ -263,7 +273,8 @@ namespace juceRmlUi
 		double m_time = 0;
 		double m_lastFrameEventTime = 0;
 		float m_fps = 0;
-		float m_targetFPS = 0;
+		// 0 = no limit. newOpenGLContextCreated() sets the default on the GL thread, the message thread reads it
+		std::atomic<float> m_targetFPS{0};
 
 		uint32_t m_pendingUpdates = 0;
 		std::atomic<bool> m_renderDone;

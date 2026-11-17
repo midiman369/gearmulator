@@ -18,6 +18,7 @@
 #include "pluginManagerLib/pluginInstaller.h"
 #include "pluginManagerLib/pluginManager.h"
 #include "pluginManagerLib/loginFile.h"
+#include "pluginManagerLib/offlineFolder.h"
 #include "pluginManagerLib/selfUpdate.h"
 #include "pluginManagerLib/zipExtractor.h"
 
@@ -229,6 +230,70 @@ namespace
 
 		// Nothing either of them needs.
 		TEST_ASSERT(combineInstallActions(IA::Reinstall, IA::Reinstall) == IA::Reinstall);
+	}
+
+	// Which parts of a column its button fetches (BUG-10486).
+	void testAColumnFetchesOnlyWhatNeedsIt()
+	{
+		using IA = InstallAction;
+
+		// The plugin current, its effect build behind: the column offers the upgrade, and the upgrade
+		// fetches the effect build only. It fetched the plugin again as well.
+		TEST_ASSERT(!fetchesPart(IA::Reinstall, IA::Upgrade));
+		TEST_ASSERT(fetchesPart(IA::Upgrade, IA::Upgrade));
+
+		// The same for one that is missing, and for an older version that was picked.
+		TEST_ASSERT(!fetchesPart(IA::Reinstall, IA::Install));
+		TEST_ASSERT(fetchesPart(IA::Install, IA::Install));
+		TEST_ASSERT(!fetchesPart(IA::Reinstall, IA::Downgrade));
+		TEST_ASSERT(fetchesPart(IA::Downgrade, IA::Downgrade));
+
+		// A part that needs something other than what the column offers is still fetched: the column
+		// shows only the more pressing of the two.
+		TEST_ASSERT(fetchesPart(IA::Downgrade, IA::Upgrade));
+
+		// Everything current: the column offers a reinstall, and its button reinstalls all of it.
+		TEST_ASSERT(fetchesPart(IA::Reinstall, IA::Reinstall));
+	}
+
+	// Whether a column's install or upgrade takes the effect build along (BUG-10488).
+	void testEffectBuildIsIncludedWhenAskedForOrInstalled()
+	{
+		// Asked for with the FX chip, whether it is installed yet or not.
+		TEST_ASSERT(includesBuild(true, true, false));
+		TEST_ASSERT(includesBuild(true, true, true));
+
+		// Not asked for but installed: kept in step with its plugin. Going by the chip alone, an
+		// installed effect build was never upgraded while "Updates available" counted it.
+		TEST_ASSERT(includesBuild(true, false, true));
+
+		// Neither: an install of the plugin does not bring an effect build nobody asked for.
+		TEST_ASSERT(!includesBuild(true, false, false));
+
+		// No effect build of that version to fetch, whatever else is true.
+		TEST_ASSERT(!includesBuild(false, true, true));
+		TEST_ASSERT(!includesBuild(false, true, false));
+		TEST_ASSERT(!includesBuild(false, false, true));
+	}
+
+	// The instrument and its effect build are two parts of one format, either of them optional
+	// (BUG-10562): what the column's button offers is about the parts that are included only.
+	void testAColumnOffersWhatIsIncluded()
+	{
+		using IA = InstallAction;
+
+		// Both, as before: the more pressing of the two.
+		TEST_ASSERT(columnAction(true, IA::Reinstall, true, IA::Install) == IA::Install);
+		TEST_ASSERT(columnAction(true, IA::Upgrade, true, IA::Reinstall) == IA::Upgrade);
+
+		// One of them: that one alone, so the instrument being current does not hide a missing
+		// effect build, nor an effect build being missing make the instrument look missing.
+		TEST_ASSERT(columnAction(false, IA::Install, true, IA::Reinstall) == IA::Reinstall);
+		TEST_ASSERT(columnAction(true, IA::Reinstall, false, IA::Install) == IA::Reinstall);
+
+		// Neither - only the effect build ticked, for a format it does not come in: nothing to offer,
+		// rather than the instrument that was not asked for.
+		TEST_ASSERT(!columnAction(false, IA::Install, false, IA::Install));
 	}
 
 	// A trimmed but faithful copy of what the server actually returns for a channel folder: it is
@@ -2220,6 +2285,168 @@ namespace
 		root.deleteRecursively();
 	}
 
+	// The backup folder can be pointed somewhere else - a folder a cloud service synchronises is
+	// the reason to - and everything that makes, lists or deletes a backup follows it, the headless
+	// program included, because it is read from the settings file rather than handed around.
+	void testBackupsGoWhereTheyArePointed()
+	{
+		const auto root = juce::File::getSpecialLocation(juce::File::tempDirectory)
+			.getChildFile("tus_pm_test_backup_folder");
+
+		root.deleteRecursively();
+		TEST_ASSERT(root.createDirectory().wasOk());
+
+		const auto data = root.getChildFile("data");
+		setDataFolder(data.getFullPathName().toStdString());
+		PlatformUtils::setSettingsFolder(root.getChildFile("settings").getFullPathName().toStdString());
+
+		const auto product = data.getChildFile("The Usual Suspects/Thing");
+		TEST_ASSERT(product.getChildFile("config").createDirectory().wasOk());
+		TEST_ASSERT(product.getChildFile("config/Thing.xml").replaceWithText("settings"));
+
+		const auto defaultFolder = juce::File(juce::String(InstallPaths::getDefaultBackupFolder()));
+		const auto cloud = root.getChildFile("Dropbox/TUS backups");
+
+		std::string error;
+		std::string atDefault;
+		TEST_ASSERT(Backup::create("Thing", atDefault, error));
+		TEST_ASSERT(juce::File(juce::String(atDefault)).isAChildOf(defaultFolder));
+
+		{
+			InstallPaths paths;
+			TEST_ASSERT(!paths.isCustomBackupFolder());
+			paths.setBackupFolder(cloud.getFullPathName().toStdString());
+			paths.save();
+		}
+
+		// Kept across a reload, and in use from then on. The one made before stays where it was
+		// made, which is also why it is not listed: it is not in the folder backups are in.
+		TEST_ASSERT(InstallPaths().isCustomBackupFolder());
+		TEST_ASSERT(juce::File(juce::String(Backup::folder())) == cloud);
+		TEST_ASSERT(Backup::list("Thing").empty());
+
+		std::string inCloud;
+		TEST_ASSERT(Backup::create("Thing", inCloud, error));
+		TEST_ASSERT(juce::File(juce::String(inCloud)).isAChildOf(cloud));
+		TEST_ASSERT(Backup::list("Thing").size() == 1);
+		TEST_ASSERT(juce::File(juce::String(atDefault)).existsAsFile());
+
+		// Deleting follows it too: out of the new folder yes, out of the old one no longer.
+		TEST_ASSERT(!Backup::remove(atDefault, error));
+		TEST_ASSERT(Backup::remove(inCloud, error));
+		TEST_ASSERT(Backup::list("Thing").empty());
+
+		// The default, set by hand or by emptying the field, is not remembered as a choice.
+		{
+			InstallPaths paths;
+			paths.setBackupFolder(InstallPaths::getDefaultBackupFolder());
+			TEST_ASSERT(!paths.isCustomBackupFolder());
+			paths.setBackupFolder(cloud.getFullPathName().toStdString());
+			paths.setBackupFolder({});
+			TEST_ASSERT(!paths.isCustomBackupFolder());
+			paths.save();
+		}
+
+		TEST_ASSERT(juce::File(juce::String(Backup::folder())) == defaultFolder);
+		TEST_ASSERT(Backup::list("Thing").size() == 1);
+
+		PlatformUtils::setSettingsFolder({});
+		setDataFolder({});
+		root.deleteRecursively();
+	}
+
+	// Another maker's plugin can have the name one of ours installs under, and installing ours
+	// deleted it and copied its insides into the roms folder. It is not replaced, not taken apart, not counted as an install of ours and not
+	// uninstalled - while ours, under the same kind of name, is still replaced as before.
+	void testAnotherMakersPluginOfTheSameNameIsLeftAlone()
+	{
+#if JUCE_MAC || JUCE_WINDOWS
+		const auto root = juce::File::getSpecialLocation(juce::File::tempDirectory)
+			.getChildFile("tus_pm_test_other_maker");
+
+		root.deleteRecursively();
+		TEST_ASSERT(root.createDirectory().wasOk());
+
+		setDataFolder(root.getChildFile("data").getFullPathName().toStdString());
+
+		const auto target = root.getChildFile("plugins");
+		TEST_ASSERT(target.createDirectory().wasOk());
+
+		const auto name = juce::String(PlatformUtils::pluginFileName("Thing", PluginFormat::VST3));
+		const auto foreign = target.getChildFile(name);
+		const auto ours = target.getChildFile(PlatformUtils::pluginFileName("Ours", PluginFormat::VST3));
+
+#if JUCE_MAC
+		// A bundle as every format is one here, identified by its Info.plist. JUCE's own default,
+		// written with the spaces of the company name, is ours as much as the one we set.
+		const auto makeBundle = [](const juce::File& _bundle, const juce::String& _id)
+		{
+			TEST_ASSERT(_bundle.getChildFile("Contents/Resources").createDirectory().wasOk());
+			TEST_ASSERT(_bundle.getChildFile("Contents/Info.plist").replaceWithText(
+				"<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+				"<plist version=\"1.0\"><dict><key>CFBundleIdentifier</key><string>" + _id +
+				"</string><key>CFBundleShortVersionString</key><string>1.7.0</string></dict></plist>"));
+			TEST_ASSERT(_bundle.getChildFile("Contents/Resources/LogoNormal.png").replaceWithText("theirs"));
+		};
+
+		makeBundle(foreign, "com.example.Thing");
+		makeBundle(ours, "com.The Usual Suspects.Ours");
+#else
+		// A system library says who made it in its version resource, and it is not us. Ours, a file
+		// with no version resource at all, is like every CLAP we build.
+		TEST_ASSERT(juce::File::getSpecialLocation(juce::File::windowsSystemDirectory)
+			.getChildFile("kernel32.dll").copyFileTo(foreign));
+		TEST_ASSERT(ours.replaceWithText("old"));
+#endif
+
+		const auto foreignSize = foreign.isDirectory() ? 0 : foreign.getSize();
+
+		TEST_ASSERT(!PlatformUtils::otherMaker(foreign.getFullPathName().toStdString()).empty());
+		TEST_ASSERT(PlatformUtils::otherMaker(ours.getFullPathName().toStdString()).empty());
+
+		// Not an install of ours, so no version and nothing to upgrade.
+		TEST_ASSERT(InstalledPlugins(false).installedFile("Thing", PluginFormat::VST3, target.getFullPathName().toStdString()).empty());
+		TEST_ASSERT(!InstalledPlugins(false).installedFile("Ours", PluginFormat::VST3, target.getFullPathName().toStdString()).empty());
+
+		const auto build = root.getChildFile("build");
+		TEST_ASSERT(build.createDirectory().wasOk());
+		TEST_ASSERT(build.getChildFile(name).replaceWithText("ours"));
+
+		const auto zip = root.getChildFile("build.zip");
+		makeZip(build, zip);
+
+		std::string error;
+		std::vector<std::string> files;
+
+		TEST_ASSERT(!ZipExtractor::install(zip.getFullPathName().toStdString(), target.getFullPathName().toStdString(),
+			name.toStdString(), "Thing", false, files, error));
+		TEST_ASSERT(error.find("somebody else") != std::string::npos);
+
+		// Untouched, and nothing of it carried anywhere.
+		TEST_ASSERT(foreign.isDirectory() ? foreign.getChildFile("Contents/Resources/LogoNormal.png").existsAsFile()
+		                                  : foreign.getSize() == foreignSize);
+		TEST_ASSERT(!juce::File(juce::String(PlatformUtils::romFolder("Thing"))).exists());
+
+		TEST_ASSERT(!PluginInstaller::uninstall("Thing", "Thing", PluginFormat::VST3, target.getFullPathName().toStdString(), {}, error));
+		TEST_ASSERT(foreign.exists());
+
+		// Ours is replaced as it always was.
+		const auto oursBuild = root.getChildFile("oursBuild");
+		TEST_ASSERT(oursBuild.createDirectory().wasOk());
+		TEST_ASSERT(oursBuild.getChildFile(ours.getFileName()).replaceWithText("new"));
+
+		const auto oursZip = root.getChildFile("ours.zip");
+		makeZip(oursBuild, oursZip);
+
+		TEST_ASSERT(ZipExtractor::install(oursZip.getFullPathName().toStdString(), target.getFullPathName().toStdString(),
+			ours.getFileName().toStdString(), "Ours", false, files, error));
+		TEST_ASSERT(ours.existsAsFile() && ours.loadFileAsString() == "new");
+
+		setDataFolder({});
+		root.deleteRecursively();
+#endif
+	}
+
 	// Installing over a plugin takes a ROM out of the bundle and puts it in the folder the plugin
 	// reads. Carrying it into the new bundle would keep it, but keep it somewhere the next update
 	// endangers all over again - so the update is the moment it gets moved for good.
@@ -2264,12 +2491,14 @@ namespace
 
 		TEST_ASSERT(install());
 
-		// The ROM the user put next to the binary, inside the bundle.
+		// The ROM the user put next to the binary, inside the bundle, and one at the top of it.
 		const auto inBundle = target.getChildFile("Thing.vst3/Contents/MacOS/thing_firmware.bin");
+		const auto atTop = target.getChildFile("Thing.vst3/other_firmware.mid");
 
 		TEST_ASSERT(inBundle.replaceWithText("irreplaceable"));
+		TEST_ASSERT(atTop.replaceWithText("also irreplaceable"));
 
-		// Updating moves it out. PluginInstaller rather than ZipExtractor, because the product name
+		// Updating moves them out. PluginInstaller rather than ZipExtractor, because the product name
 		// is what says which roms folder, and only the installer knows it.
 		PluginInstaller installer;
 
@@ -2279,9 +2508,11 @@ namespace
 
 		TEST_ASSERT(kept.existsAsFile());
 		TEST_ASSERT(kept.loadFileAsString() == "irreplaceable");
+		TEST_ASSERT(data.getChildFile("The Usual Suspects/Thing/roms/other_firmware.mid").loadFileAsString() == "also irreplaceable");
 
-		// And it is out of the bundle, not merely also in the folder - that is the whole point.
+		// And they are out of the bundle, not merely also in the folder - that is the whole point.
 		TEST_ASSERT(!inBundle.exists());
+		TEST_ASSERT(!atTop.exists());
 
 		// The plugin still arrived.
 		TEST_ASSERT(target.getChildFile("Thing.vst3/Contents/MacOS/Thing").existsAsFile());
@@ -2293,7 +2524,7 @@ namespace
 
 		const auto roms = data.getChildFile("The Usual Suspects/Thing/roms");
 
-		TEST_ASSERT(roms.findChildFiles(juce::File::findFiles, false).size() == 1);
+		TEST_ASSERT(roms.findChildFiles(juce::File::findFiles, false).size() == 2);
 
 		setDataFolder({});
 		root.deleteRecursively();
@@ -2350,41 +2581,48 @@ namespace
 		root.deleteRecursively();
 	}
 
-	// A ROM inside the bundle survives the update that replaces the bundle. RomLoader always
-	// searches the folder the binary sits in, which on macOS is inside the bundle, so that is a
-	// place people really do keep ROMs - and an update used to delete the lot. The one product
-	// that had not been updated was the only one that still had its ROM.
-	// A ROM the user kept inside a plugin survives an update - and ends up somewhere the update
-	// cannot break.
+	// What the user kept inside a plugin survives the update that replaces the plugin. A VST3 is a
+	// folder, and people keep sound sets in it - an update used to copy every file of them into the
+	// roms folder, flat, and the patch manager lost every folder of them it knew.
 	//
-	// It used to be carried into the new bundle, which keeps the file and breaks the plugin: a macOS
-	// bundle is sealed, one file the signature does not cover is enough for the system to refuse it,
-	// and the host then stops listing the plugin (BUG-10469). So it goes to the product's roms
-	// folder, which is the other place the ROM loader looks, and the bundle is left exactly as it
-	// was built.
+	// On Windows and Linux they go into the new bundle where they were. A macOS bundle is sealed: one
+	// file the signature does not cover is enough for the system to refuse it, and the host then
+	// stops listing the plugin (BUG-10469). So there the update stops and names them, and nothing is
+	// copied, moved or deleted until the user has taken them out. A ROM lying where the plugin reads
+	// one is moved to the roms folder either way, but never a .mid in a folder of the user's - a
+	// Virus bank is one of those.
 	void testAnUpdateKeepsWhatTheUserPutInTheBundle()
 	{
 		const auto root = juce::File::getSpecialLocation(juce::File::tempDirectory)
-			.getChildFile("tus_pm_test_bundle_roms");
+			.getChildFile("tus_pm_test_bundle_user_files");
 
 		root.deleteRecursively();
 		TEST_ASSERT(root.createDirectory().wasOk());
 
-		setDataFolder(root.getChildFile("data").getFullPathName().toStdString());
+		const auto data = root.getChildFile("data");
+		setDataFolder(data.getFullPathName().toStdString());
 
 		const auto target = root.getChildFile("plugins");
 
 		std::string error;
 		std::vector<std::string> files;
 
-		// The build that is already installed.
+		// The build that is already installed, signed, with a file the next build no longer has.
 		const auto first = root.getChildFile("first");
 
 		TEST_ASSERT(first.getChildFile("Thing.vst3/Contents/MacOS").createDirectory().wasOk());
 		TEST_ASSERT(first.getChildFile("Thing.vst3/Contents/MacOS/Thing").replaceWithText("v1"));
+		TEST_ASSERT(first.getChildFile("Thing.vst3/Contents/Resources").createDirectory().wasOk());
+		TEST_ASSERT(first.getChildFile("Thing.vst3/Contents/Resources/old.rsrc").replaceWithText("ours"));
 		TEST_ASSERT(first.getChildFile("Thing.vst3/Contents/_CodeSignature").createDirectory().wasOk());
-		TEST_ASSERT(first.getChildFile("Thing.vst3/Contents/_CodeSignature/CodeResources")
-			.replaceWithText("signature of v1"));
+		TEST_ASSERT(first.getChildFile("Thing.vst3/Contents/_CodeSignature/CodeResources").replaceWithText(
+			"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+			"<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n"
+			"<plist version=\"1.0\"><dict>"
+			"<key>files</key><dict><key>Resources/old.rsrc</key><data>AAAA</data></dict>"
+			"<key>files2</key><dict><key>Resources/old.rsrc</key><dict><key>hash2</key><data>AAAA</data></dict></dict>"
+			"<key>rules</key><dict/>"
+			"</dict></plist>\n"));
 
 		const auto firstZip = root.getChildFile("first.zip");
 		makeZip(first, firstZip);
@@ -2392,14 +2630,17 @@ namespace
 		TEST_ASSERT(ZipExtractor::install(firstZip.getFullPathName().toStdString(),
 			target.getFullPathName().toStdString(), "Thing.vst3", "Thing", false, files, error));
 
-		// What the user then puts next to the binary, which is one of the two places the ROM loader
-		// looks, and the Finder's leavings from having opened the bundle to do it.
+		// What the user then puts in there: a ROM next to the binary, where the ROM loader looks, a
+		// folder of sound sets, and the Finder's leavings from having opened the bundle.
 		const auto rom = target.getChildFile("Thing.vst3/Contents/MacOS/thing_firmware.bin");
+		const auto bank = target.getChildFile("Thing.vst3/Contents/MacOS/Soundsets/bank.mid");
 
 		TEST_ASSERT(rom.replaceWithText("a ROM nobody can download again"));
+		TEST_ASSERT(bank.getParentDirectory().createDirectory().wasOk());
+		TEST_ASSERT(bank.replaceWithText("a bank somebody made"));
 		TEST_ASSERT(target.getChildFile("Thing.vst3/Contents/MacOS/.DS_Store").replaceWithText("finder"));
 
-		// And the next build, which knows nothing about it.
+		// And the next build, which knows nothing about any of it.
 		const auto second = root.getChildFile("second");
 
 		TEST_ASSERT(second.getChildFile("Thing.vst3/Contents/MacOS").createDirectory().wasOk());
@@ -2408,40 +2649,283 @@ namespace
 		const auto secondZip = root.getChildFile("second.zip");
 		makeZip(second, secondZip);
 
-		TEST_ASSERT(ZipExtractor::install(secondZip.getFullPathName().toStdString(),
-			target.getFullPathName().toStdString(), "Thing.vst3", "Thing", false, files, error));
+		Asset asset;
+		asset.product = "Thing";
+		asset.format = "VST3";
+		asset.version = "2.2.28";
+		asset.url = "file:///" + secondZip.getFullPathName().replaceCharacter('\\', '/').toStdString();
 
-		// The update happened...
-		TEST_ASSERT(target.getChildFile("Thing.vst3/Contents/MacOS/Thing").loadFileAsString() == "v2");
+		PluginInstaller installer;
 
-		// ...and the ROM is kept, in the folder the plugin reads ROMs from.
-		const auto kept = juce::File(juce::String(PlatformUtils::romFolder("Thing")))
-			.getChildFile("thing_firmware.bin");
+		const auto updated = installer.install(asset, {}, target.getFullPathName().toStdString(), {}, error);
 
-		TEST_ASSERT(kept.existsAsFile());
-		TEST_ASSERT(kept.loadFileAsString() == "a ROM nobody can download again");
+		// The ROM is in the folder the plugin reads ROMs from, whichever way the update went...
+		const auto roms = data.getChildFile("The Usual Suspects/Thing/roms");
 
-		// Nothing that was not built into it is inside the new bundle: not the ROM, not the signature
-		// of the build that is gone, not the file the Finder left. One file that the signature does
-		// not cover is all it takes for macOS to refuse the whole plugin.
+		TEST_ASSERT(roms.getChildFile("thing_firmware.bin").loadFileAsString() == "a ROM nobody can download again");
 		TEST_ASSERT(!rom.exists());
-		TEST_ASSERT(!target.getChildFile("Thing.vst3/Contents/_CodeSignature/CodeResources").exists());
-		TEST_ASSERT(!target.getChildFile("Thing.vst3/Contents/MacOS/.DS_Store").exists());
+
+		// ...and the bank is not: a folder of the user's is not taken apart.
+		TEST_ASSERT(!roms.getChildFile("bank.mid").exists());
+		TEST_ASSERT(bank.loadFileAsString() == "a bank somebody made");
+
+#if JUCE_MAC
+		// It is in the way, and the update says so - naming it, and nothing that is not the user's.
+		TEST_ASSERT(!updated);
+		TEST_ASSERT(error.find("Contents/MacOS/Soundsets/bank.mid") != std::string::npos);
+		TEST_ASSERT(error.find("old.rsrc") == std::string::npos);
+		TEST_ASSERT(error.find(".DS_Store") == std::string::npos);
+		TEST_ASSERT(error.find("thing_firmware") == std::string::npos);
+		TEST_ASSERT(error.find("_CodeSignature") == std::string::npos);
+
+		// Nothing was touched.
+		TEST_ASSERT(target.getChildFile("Thing.vst3/Contents/MacOS/Thing").loadFileAsString() == "v1");
+
+		// Once the user has taken it out, the update goes through, and the bundle is exactly the build:
+		// not the signature of the one that is gone, not the file the Finder left.
+		TEST_ASSERT(bank.getParentDirectory().deleteRecursively());
+		TEST_ASSERT(installer.install(asset, {}, target.getFullPathName().toStdString(), {}, error));
+		TEST_ASSERT(target.getChildFile("Thing.vst3/Contents/MacOS/Thing").loadFileAsString() == "v2");
 		TEST_ASSERT(target.getChildFile("Thing.vst3").findChildFiles(juce::File::findFiles, true).size() == 1);
+#else
+		// The update happened, and the bank is still where it was, in the new bundle.
+		TEST_ASSERT(updated);
+		TEST_ASSERT(target.getChildFile("Thing.vst3/Contents/MacOS/Thing").loadFileAsString() == "v2");
+#endif
 
-		// Nothing of the replaced copy is left lying beside it either.
+		// Nothing of the replaced copy is left lying beside it.
 		TEST_ASSERT(target.findChildFiles(juce::File::findDirectories, false).size() == 1);
-
-		// A third update keeps one copy rather than a numbered pile of them: the ROM is in the roms
-		// folder now, so the install finds nothing of the user's left in the bundle to carry out.
-		TEST_ASSERT(ZipExtractor::install(secondZip.getFullPathName().toStdString(),
-			target.getFullPathName().toStdString(), "Thing.vst3", "Thing", false, files, error));
-
-		TEST_ASSERT(juce::File(juce::String(PlatformUtils::romFolder("Thing")))
-			.findChildFiles(juce::File::findFiles, false).size() == 1);
 
 		setDataFolder({});
 		root.deleteRecursively();
+	}
+
+	// An offline install end to end (BUG-10543): a folder prepared for another system holds that system's
+	// builds and nothing else, with the picture and the files the product brings; a second run fetches
+	// nothing that is there already; a program pointed at the folder installs from it without the
+	// server, additional files included; and a download kept by an install is such a folder as well.
+	void testAnOfflineFolder()
+	{
+		const Fixture fixture;
+
+		const auto root = fixture.dir;
+		const auto data = root.getChildFile("data");
+		setDataFolder(data.getFullPathName().toStdString());
+
+		// Two real archives, for two systems, and what the product brings, all on "the server".
+		const auto archive = [&](const juce::String& _bundle, const juce::String& _name)
+		{
+			const auto content = root.getChildFile("content-" + _name);
+			TEST_ASSERT(content.getChildFile(_bundle + "/Contents").createDirectory().wasOk());
+			TEST_ASSERT(content.getChildFile(_bundle + "/Contents/binary").replaceWithText("v1"));
+			makeZip(content, root.getChildFile("server/" + _name));
+			content.deleteRecursively();
+		};
+
+		TEST_ASSERT(root.getChildFile("server").createDirectory().wasOk());
+		archive("Synth-1000.vst3", "TheUsualSuspects-Synth-1000-VST3-2.2.16-win64.zip");
+		archive("Synth-1000.component", "TheUsualSuspects-Synth-1000-AU-2.2.16-MacOS.zip");
+		archive("Synth-1000FX.vst3", "TheUsualSuspects-Synth-1000FX-VST3-2.2.16-win64.zip");
+
+		// Into JSON, where a backslash of a Windows path would be an escape.
+		const auto jsonUrl = [&fixture](const std::string& _path)
+		{
+			return juce::String(fixture.url(_path)).replaceCharacter('\\', '/').toStdString();
+		};
+
+		fixture.write("server/Synth-1000_thumbnail.png", "picture");
+		fixture.write("server/Factory.mid", "factory bank");
+
+		fixture.write("cache/2.2.16.json", R"({"published_at":"2026-09-20T20:08:24Z","assets":[
+			{"name":"TheUsualSuspects-Synth-1000-VST3-2.2.16-win64.zip","browser_download_url":")"
+			+ jsonUrl("server/TheUsualSuspects-Synth-1000-VST3-2.2.16-win64.zip") + R"("},
+			{"name":"TheUsualSuspects-Synth-1000-AU-2.2.16-MacOS.zip","browser_download_url":")"
+			+ jsonUrl("server/TheUsualSuspects-Synth-1000-AU-2.2.16-MacOS.zip") + R"("},
+			{"name":"TheUsualSuspects-Synth-1000FX-VST3-2.2.16-win64.zip","browser_download_url":")"
+			+ jsonUrl("server/TheUsualSuspects-Synth-1000FX-VST3-2.2.16-win64.zip") + R"("}]})");
+
+		fixture.write("products.json", R"({"products":[
+			{"product":"Synth-1000","slug":"synth-1000","name":"Synth 1000","description":"A synth",
+			 "thumbnail":")" + jsonUrl("server/Synth-1000_thumbnail.png") + R"(",
+			 "files":[{"folder":"presets","urls":[")" + jsonUrl("server/Factory.mid") + R"("]}]}]})");
+
+		auto pm = makeManager(false);
+
+		std::string error;
+		TEST_ASSERT(pm.refresh(error));
+
+		const auto offline = root.getChildFile("offline");
+
+		PluginManager::OfflineExport request;
+		request.folder = offline.getFullPathName().toStdString();
+		request.os = "macos";
+		request.arch = "universal";
+		request.products = {"Synth-1000"};
+		request.formats = {"VST3", "AU"};
+		request.withPluginManager = false;
+
+		// For a Mac, from wherever this runs: the Mac's build and not this system's.
+		TEST_ASSERT(pm.offlineBuilds(request).size() == 1);
+
+		// An effect build brings its plugin along, without which the list has no row to install it from.
+		{
+			auto fxOnly = request;
+			fxOnly.os = "windows";
+			fxOnly.arch = "x86_64";
+			fxOnly.products = {"Synth-1000FX"};
+
+			const auto builds = pm.offlineBuilds(fxOnly);
+			TEST_ASSERT(builds.size() == 2);
+			TEST_ASSERT(builds[0].product == "Synth-1000" && builds[1].product == "Synth-1000FX");
+		}
+
+		// And so does a kept download of one.
+		{
+			const auto kept = root.getChildFile("keptfx");
+			pm.getInstallPaths().setDownloadFolder(kept.getFullPathName().toStdString());
+
+			const auto* fx = pm.getCatalog().find("Synth-1000FX", "VST3", "2.2.16", "windows", "x86_64");
+			TEST_ASSERT(fx != nullptr);
+
+			const auto keep = pm.keepDownload(*fx);
+			TEST_ASSERT(keep != nullptr);
+			keep(root.getChildFile("server/TheUsualSuspects-Synth-1000FX-VST3-2.2.16-win64.zip").getFullPathName().toStdString());
+
+			TEST_ASSERT(kept.getChildFile("TheUsualSuspects-Synth-1000FX-VST3-2.2.16-win64.zip").existsAsFile());
+			TEST_ASSERT(kept.getChildFile("TheUsualSuspects-Synth-1000-VST3-2.2.16-win64.zip").existsAsFile());
+
+			pm.getInstallPaths().setDownloadFolder({});
+		}
+
+		std::string message;
+		float lastProgress = 0.0f;
+
+		TEST_ASSERT(pm.exportOffline(request, [&](const float _progress, const std::string&) { lastProgress = _progress; },
+			std::make_shared<bool>(false), message));
+
+		TEST_ASSERT(lastProgress == 1.0f);
+		TEST_ASSERT(offline.getChildFile("TheUsualSuspects-Synth-1000-AU-2.2.16-MacOS.zip").existsAsFile());
+		TEST_ASSERT(!offline.getChildFile("TheUsualSuspects-Synth-1000-VST3-2.2.16-win64.zip").exists());
+		TEST_ASSERT(offline.getChildFile(OfflineFolder::g_manifest).existsAsFile());
+		TEST_ASSERT(offline.getChildFile("thumbnails/Synth-1000_thumbnail.png").loadFileAsString() == "picture");
+		TEST_ASSERT(offline.getChildFile("files/Synth-1000/presets/Factory.mid").loadFileAsString() == "factory bank");
+
+		// Nothing is fetched twice, and the same folder takes this system's builds as well.
+		TEST_ASSERT(pm.exportOffline(request, {}, {}, message));
+		TEST_ASSERT(message.find("0 builds") == 0 && message.find("1 were there already") != std::string::npos);
+
+		request.os = "windows";
+		request.arch = "x86_64";
+
+		TEST_ASSERT(pm.exportOffline(request, {}, {}, message));
+		TEST_ASSERT(offline.getChildFile("TheUsualSuspects-Synth-1000-VST3-2.2.16-win64.zip").existsAsFile());
+
+		// What the folder says it holds, read back: where each build came from and when, and the
+		// product with its picture and its files as files in the folder.
+		{
+			std::vector<Asset> assets;
+			std::vector<Product> products;
+
+			TEST_ASSERT(OfflineFolder::read(offline.getFullPathName().toStdString(), assets, products, error));
+			TEST_ASSERT(assets.size() == 2);
+
+			for (const auto& asset : assets)
+			{
+				TEST_ASSERT(asset.channel == Channel::Public);
+				TEST_ASSERT(asset.listed == "2026-09-20 20:08");
+				TEST_ASSERT(asset.url.rfind("file:///", 0) == 0);
+			}
+
+			TEST_ASSERT(products.size() == 1);
+			TEST_ASSERT(products[0].name == "Synth 1000");
+			TEST_ASSERT(products[0].thumbnail.rfind("file:///", 0) == 0);
+			TEST_ASSERT(products[0].files.size() == 1 && products[0].files[0].files.size() == 1);
+			TEST_ASSERT(products[0].files[0].files[0].url.find("files/Synth-1000/presets/Factory.mid") != std::string::npos);
+		}
+
+		// The server gone, the folder is the catalog: the build installs from it, and so does what the
+		// product brings.
+		fixture.write("cache/2.2.16.json", R"({"assets":[]})");
+		root.getChildFile("server").deleteRecursively();
+
+		{
+			auto local = makeManager(false);
+			local.setLocalFolder(offline.getFullPathName().toStdString());
+
+			TEST_ASSERT(local.refresh(error));
+
+			const auto* asset = local.getCatalog().find("Synth-1000", "VST3", "2.2.16", "windows", "x86_64");
+			TEST_ASSERT(asset != nullptr);
+			TEST_ASSERT(local.getCatalog().findProduct("Synth-1000") != nullptr);
+
+			const auto target = root.getChildFile("plugins");
+			PluginInstaller installer;
+
+			TEST_ASSERT(installer.install(*asset, {}, target.getFullPathName().toStdString(), {}, message));
+			TEST_ASSERT(target.getChildFile("Synth-1000.vst3/Contents/binary").loadFileAsString() == "v1");
+
+			TEST_ASSERT(local.installAdditionalFiles(*asset, message));
+			TEST_ASSERT(data.getChildFile("The Usual Suspects/Synth-1000/presets/Factory.mid").loadFileAsString() == "factory bank");
+		}
+
+		// A folder of archives somebody put together by hand is read as well: public builds, a product
+		// named after them, and their variants with them rather than on rows of their own.
+		{
+			const auto plain = root.getChildFile("plain");
+			TEST_ASSERT(plain.createDirectory().wasOk());
+
+			const auto zip = offline.getChildFile("TheUsualSuspects-Synth-1000-VST3-2.2.16-win64.zip");
+			TEST_ASSERT(zip.copyFileTo(plain.getChildFile(zip.getFileName())));
+			TEST_ASSERT(zip.copyFileTo(plain.getChildFile("TheUsualSuspects-Synth-1000FX-VST3-2.2.16-win64.zip")));
+			TEST_ASSERT(plain.getChildFile("readme.txt").replaceWithText("not a build"));
+
+			std::vector<Asset> assets;
+			std::vector<Product> products;
+
+			TEST_ASSERT(OfflineFolder::read(plain.getFullPathName().toStdString(), assets, products, error));
+			TEST_ASSERT(assets.size() == 2);
+			TEST_ASSERT(products.size() == 1 && products[0].product == "Synth-1000");
+
+			// And a folder with no build in it says so.
+			const auto empty = root.getChildFile("empty");
+			TEST_ASSERT(empty.createDirectory().wasOk());
+			TEST_ASSERT(!OfflineFolder::read(empty.getFullPathName().toStdString(), assets, products, error));
+		}
+
+		// A download kept by an install makes the same kind of folder, product and all - fetched from
+		// wherever the install fetched from, which is the offline folder here.
+		{
+			auto local = makeManager(false);
+			local.setLocalFolder(offline.getFullPathName().toStdString());
+			TEST_ASSERT(local.refresh(error));
+
+			const auto kept = root.getChildFile("kept");
+			local.getInstallPaths().setDownloadFolder(kept.getFullPathName().toStdString());
+
+			const auto* asset = local.getCatalog().find("Synth-1000", "VST3", "2.2.16", "windows", "x86_64");
+			TEST_ASSERT(asset != nullptr);
+
+			PluginInstaller installer;
+			installer.setOnDownloaded(local.keepDownload(*asset));
+
+			TEST_ASSERT(installer.install(*asset, {}, root.getChildFile("plugins2").getFullPathName().toStdString(), {}, message));
+
+			TEST_ASSERT(kept.getChildFile("TheUsualSuspects-Synth-1000-VST3-2.2.16-win64.zip").existsAsFile());
+			TEST_ASSERT(kept.getChildFile("files/Synth-1000/presets/Factory.mid").loadFileAsString() == "factory bank");
+
+			std::vector<Asset> assets;
+			std::vector<Product> products;
+
+			TEST_ASSERT(OfflineFolder::read(kept.getFullPathName().toStdString(), assets, products, error));
+			TEST_ASSERT(assets.size() == 1 && assets[0].listed == "2026-09-20 20:08");
+			TEST_ASSERT(products.size() == 1 && products[0].name == "Synth 1000");
+
+			// Nothing is kept while no folder is set.
+			local.getInstallPaths().setDownloadFolder({});
+			TEST_ASSERT(!local.keepDownload(*asset));
+		}
+
+		setDataFolder({});
 	}
 
 	// What the header button offers, and what it must not offer: a build older than the one
@@ -2790,6 +3274,163 @@ namespace
 
 		PlatformUtils::setSettingsFolder({});
 		dir.deleteRecursively();
+	}
+
+	// The program of an effect build is installed beside the plugin's own when that is installed, so
+	// that folder is where it has to be looked for too. It was looked for only in a folder named after
+	// itself, and every effect standalone installed next to its plugin read as not installed, offering
+	// Install again after every install (BUG-10493).
+	void testAnEffectProgramIsFoundBesideItsPlugin()
+	{
+		const Fixture fixture;
+
+		const auto programs = fixture.dir.getChildFile("programs");
+		const auto pluginFolder = programs.getChildFile("Synth-1000");
+		TEST_ASSERT(pluginFolder.createDirectory().wasOk());
+
+		PlatformUtils::setSettingsFolder(fixture.dir.getChildFile("settings").getFullPathName().toStdString());
+
+		// What an install into the default location leaves, from the reporter's installed.json: the
+		// effect build's program in the plugin's folder, not in one named after itself. The default
+		// location is the user's own Applications folder, which a test does not write to, so the state
+		// is set up rather than installed.
+		{
+			InstalledPlugins records;
+
+			for (const std::string product : {"Synth-1000", "Synth-1000FX"})
+			{
+				Asset program;
+				program.product = product;
+				program.format = "Standalone";
+				program.version = "2.2.19";
+
+				const auto name = product + ".app";
+				TEST_ASSERT(pluginFolder.getChildFile(juce::String(name)).replaceWithText("program"));
+
+				records.set(program, pluginFolder.getFullPathName().toStdString(), {name});
+			}
+
+			records.save();
+		}
+
+		{
+			// Reading the settings - the test's own folder - is what brings in the records above.
+			PluginManager pm(true);
+			pm.setCredentials(Channel::Internal, {}, {"team", "secret"});
+
+			std::string error;
+			TEST_ASSERT(pm.refresh(error));
+
+			pm.getInstallPaths().set(PluginFormat::Standalone, programs.getFullPathName().toStdString());
+
+			TEST_ASSERT(pm.isInstalled("Synth-1000", "Standalone"));
+			TEST_ASSERT(pm.isInstalled("Synth-1000FX", "Standalone"));
+			TEST_ASSERT(pm.getInstalledVersion("Synth-1000FX", "Standalone") == "2.2.19");
+		}
+
+		PlatformUtils::setSettingsFolder({});
+	}
+
+	// The case behind most of the questions about effect builds (BUG-10488): the plugin is up to date and
+	// its effect build is not, with the FX chip off, which is how it starts. "Updates available" counts
+	// the effect build, so the column has to offer the upgrade that takes it along - it offered a
+	// reinstall, the row never left that group, and the effect build was never upgraded.
+	void testAnInstalledEffectBuildKeepsUpWithItsPlugin()
+	{
+		const Fixture fixture;
+
+		// The builds of this platform, which is the one every answer below is about.
+		const std::string platform =
+#if JUCE_WINDOWS
+			"win64";
+#elif JUCE_MAC
+			"MacOS";
+#elif defined(__aarch64__)
+			"Linux_aarch64";
+#else
+			"Linux_x86_64";
+#endif
+
+		const auto link = [&](const std::string& _product)
+		{
+			const auto name = "TheUsualSuspects-" + _product + "-VST3-2.2.19-" + platform + ".zip";
+			return "<a href=\"/builds/prototype-9/internal/" + name + "\">x</a>";
+		};
+
+		fixture.write("builds/prototype-9/internal/index.html", link("Prototype-9") + link("Prototype-9FX"));
+
+		const auto plugins = fixture.dir.getChildFile("vst3");
+		TEST_ASSERT(plugins.createDirectory().wasOk());
+
+		PlatformUtils::setSettingsFolder(fixture.dir.getChildFile("settings").getFullPathName().toStdString());
+
+		const auto installed = [&](const std::string& _product, const std::string& _version)
+		{
+			Asset build;
+			build.product = _product;
+			build.format = "VST3";
+			build.version = _version;
+			return build;
+		};
+
+		// The plugin at the newest version, its effect build one behind.
+		{
+			InstalledPlugins records;
+
+			for (const auto& [product, version] : {std::make_pair(std::string("Prototype-9"), std::string("2.2.19")),
+			                                       std::make_pair(std::string("Prototype-9FX"), std::string("2.2.18"))})
+			{
+				TEST_ASSERT(plugins.getChildFile(juce::String(product + ".vst3")).replaceWithText("plugin"));
+				records.set(installed(product, version), plugins.getFullPathName().toStdString(), {product + ".vst3"});
+			}
+
+			records.save();
+		}
+
+		{
+			// Reading the settings - the test's own folder - is what brings in the records above.
+			PluginManager pm(true);
+			pm.setCredentials(Channel::Internal, {}, {"team", "secret"});
+
+			std::string error;
+			TEST_ASSERT(pm.refresh(error));
+
+			pm.getInstallPaths().set(PluginFormat::VST3, plugins.getFullPathName().toStdString());
+
+			TEST_ASSERT(pm.getCatalog().fxProductOf("Prototype-9") == "Prototype-9FX");
+			TEST_ASSERT(pm.hasUpdate("Prototype-9"));
+
+			// What the column is made of, with the chip off.
+			const auto actionOf = [&](const std::string& _product)
+			{
+				return pm.installAction(_product, "VST3", true, pm.getInstalledVersion(_product, "VST3"), "2.2.19");
+			};
+
+			const auto plugin = actionOf("Prototype-9");
+			const auto fx = actionOf("Prototype-9FX");
+
+			TEST_ASSERT(plugin == InstallAction::Reinstall);
+			TEST_ASSERT(fx == InstallAction::Upgrade);
+
+			// Installed, so it is part of the column although nobody ticked it, and the column offers
+			// what the group it sits in says: an upgrade.
+			const auto fxInstalled = pm.isInstalled("Prototype-9FX", "VST3");
+			TEST_ASSERT(fxInstalled);
+			TEST_ASSERT(includesBuild(true, false, fxInstalled));
+			TEST_ASSERT(combineInstallActions(plugin, fx) == InstallAction::Upgrade);
+
+			// And that upgrade fetches the effect build alone, not the plugin that is current (BUG-10486).
+			TEST_ASSERT(!fetchesPart(plugin, combineInstallActions(plugin, fx)));
+			TEST_ASSERT(fetchesPart(fx, combineInstallActions(plugin, fx)));
+
+			// And once that upgrade has run, the row has nothing left to offer.
+			pm.recordInstall(installed("Prototype-9FX", "2.2.19"), {"Prototype-9FX.vst3"});
+
+			TEST_ASSERT(!pm.hasUpdate("Prototype-9"));
+			TEST_ASSERT(actionOf("Prototype-9FX") == InstallAction::Reinstall);
+		}
+
+		PlatformUtils::setSettingsFolder({});
 	}
 
 	void testUninstallTakesWhatTheArchiveBrought()
@@ -3208,6 +3849,16 @@ namespace
 
 		TEST_ASSERT(!real.empty());
 		TEST_ASSERT(real.front() == PlatformUtils::getDefaultPluginPath(PluginFormat::VST3));
+
+#if JUCE_MAC
+		// The machine-wide folder is the default, and the user's own, the default until 2.2.28, is
+		// still looked in: everything installed before then is there (BUG-10526).
+		const auto userVst3 = juce::File::getSpecialLocation(juce::File::userHomeDirectory)
+			.getChildFile("Library/Audio/Plug-Ins/VST3").getFullPathName().toStdString();
+
+		TEST_ASSERT(real.front() == "/Library/Audio/Plug-Ins/VST3");
+		TEST_ASSERT(std::find(real.begin(), real.end(), userVst3) != real.end());
+#endif
 
 		PlatformUtils::setSettingsFolder({});
 		dir.deleteRecursively();
@@ -3700,6 +4351,97 @@ namespace
 		root.deleteRecursively();
 	}
 
+	// Whether a product has a ROM (BUG-10495): with nothing anywhere a plugin looks, there is none
+	// whatever the plugin said; with a file, it is unknown until the plugin started, and then it is what
+	// the plugin said - unless a file arrived after a start that found nothing.
+	void testRomState()
+	{
+		const Fixture fixture;
+
+		const auto root = juce::File::getSpecialLocation(juce::File::tempDirectory)
+			.getChildFile("pluginManagerTest-romstate-" + juce::String(juce::Random::getSystemRandom().nextInt64()));
+
+		const auto plugins = root.getChildFile("plugins");
+		const auto data = root.getChildFile("data");
+
+		setDataFolder(data.getFullPathName().toStdString());
+		PlatformUtils::setSettingsFolder(root.getChildFile("settings").getFullPathName().toStdString());
+
+		auto pm = makeManager(true);
+		std::string error;
+		TEST_ASSERT(pm.refresh(error));
+
+		using RomState = PluginManager::RomState;
+
+		TEST_ASSERT(pm.romState("Synth-1000") == RomState::NotInstalled);
+
+		pm.getInstallPaths().set(PluginFormat::VST3, plugins.getFullPathName().toStdString());
+
+		const auto binaryFolder = plugins.getChildFile("Synth-1000.vst3/Contents/x86_64-win");
+		TEST_ASSERT(binaryFolder.createDirectory().wasOk());
+		TEST_ASSERT(binaryFolder.getChildFile("Synth-1000.vst3").replaceWithText("x"));
+
+		const auto product = data.getChildFile("The Usual Suspects/Synth-1000");
+		const auto roms = product.getChildFile("roms");
+		TEST_ASSERT(roms.createDirectory().wasOk());
+
+		TEST_ASSERT(pm.romState("Synth-1000") == RomState::Missing);
+
+		// Beside the plugin's binary counts as much as the ROM folder, and so does the folder the plugin is
+		// in, where only a file with the extension of a ROM counts: changelogs lie there as well.
+		const auto beside = binaryFolder.getChildFile("firmware.bin");
+		TEST_ASSERT(beside.replaceWithText("rom"));
+		TEST_ASSERT(pm.romState("Synth-1000") == RomState::Unchecked);
+		TEST_ASSERT(beside.deleteFile());
+
+		TEST_ASSERT(plugins.getChildFile("changelog_Synth-1000.txt").replaceWithText("changes"));
+		TEST_ASSERT(pm.romState("Synth-1000") == RomState::Missing);
+
+		const auto nextToIt = plugins.getChildFile("upper.BIN");
+		TEST_ASSERT(nextToIt.replaceWithText("rom"));
+		TEST_ASSERT(pm.romState("Synth-1000") == RomState::Unchecked);
+		TEST_ASSERT(nextToIt.deleteFile());
+
+		const auto rom = roms.getChildFile("firmware.bin");
+		TEST_ASSERT(rom.replaceWithText("rom"));
+		TEST_ASSERT(pm.romState("Synth-1000") == RomState::Unchecked);
+
+		const auto status = product.getChildFile("config/romStatus.json");
+		TEST_ASSERT(status.getParentDirectory().createDirectory().wasOk());
+
+		TEST_ASSERT(status.replaceWithText(R"({"valid":true})"));
+		TEST_ASSERT(pm.romState("Synth-1000") == RomState::Valid);
+
+		// The plugin rejected what is there, which has been there since before it started.
+		const auto earlier = juce::Time::getCurrentTime() - juce::RelativeTime::hours(1);
+		TEST_ASSERT(rom.setLastModificationTime(earlier));
+		rom.setCreationTime(earlier);	// not on every system, where it is the time of the line above, which is earlier still
+
+		TEST_ASSERT(status.replaceWithText(R"({"valid":false})"));
+		TEST_ASSERT(pm.romState("Synth-1000") == RomState::Rejected);
+
+		// A ROM put there since has not been tried. A copy keeps the date it was written, so it is the
+		// date it arrived that says so.
+		TEST_ASSERT(status.setLastModificationTime(juce::Time::getCurrentTime() - juce::RelativeTime::minutes(1)));
+
+		const auto copied = roms.getChildFile("copied.bin");
+		TEST_ASSERT(copied.replaceWithText("rom"));
+		TEST_ASSERT(copied.setLastModificationTime(earlier));
+		TEST_ASSERT(pm.romState("Synth-1000") == RomState::Unchecked);
+
+		// With every file gone there is none, unless the plugin said it found one: it knows places this
+		// does not.
+		TEST_ASSERT(rom.deleteFile() && copied.deleteFile());
+		TEST_ASSERT(pm.romState("Synth-1000") == RomState::Missing);
+
+		TEST_ASSERT(status.replaceWithText(R"({"valid":true})"));
+		TEST_ASSERT(pm.romState("Synth-1000") == RomState::Valid);
+
+		PlatformUtils::setSettingsFolder({});
+		setDataFolder({});
+		root.deleteRecursively();
+	}
+
 	// An LV2 is a folder with a bare library in it and the turtle files that describe it. macOS asks
 	// CFBundle, which wants a bundle with an Info.plist, and an LV2 is not one; an ELF carries
 	// nothing either. So the turtle is the only thing that answers on two of the three systems, and
@@ -3789,6 +4531,9 @@ int main()
 		testVersionOrdering();
 		testInstallActions();
 		testPairedInstallActions();
+		testEffectBuildIsIncludedWhenAskedForOrInstalled();
+		testAColumnOffersWhatIsIncluded();
+		testAColumnFetchesOnlyWhatNeedsIt();
 		testDirectoryIndex();
 		testDirectoryIndexDoesNotDuplicate();
 		testEmptyDirectoryIndex();
@@ -3841,6 +4586,8 @@ int main()
 		testPerProductPathsWin();
 		testUninstallRemovesWhatWasInstalled();
 		testAProgramKeepsTheNameItWasBuiltUnder();
+		testAnEffectProgramIsFoundBesideItsPlugin();
+		testAnInstalledEffectBuildKeepsUpWithItsPlugin();
 		testUninstallTakesWhatTheArchiveBrought();
 		testAnInstallLeftBehindIsStillFound();
 		testAnInstalledBuildIsFoundWhereverItIs();
@@ -3850,8 +4597,12 @@ int main()
 		testSeveralRemovalsAreOneRun();
 		testAProgramIsFoundWithoutKnowingItsName();
 		testAnUpdateKeepsWhatTheUserPutInTheBundle();
+		testAnOfflineFolder();
+		testRomState();
 		testTheTeamLoginFlagSurvivesBeingWrittenBack();
 		testBackupAndRestoreOfADataFolder();
+		testBackupsGoWhereTheyArePointed();
+		testAnotherMakersPluginOfTheSameNameIsLeftAlone();
 		testAnUpdateMovesTheRomOutOfTheBundle();
 		testUninstallKeepsTheRomItFinds();
 		testAnUpdateIsOnlyOfferedForANewerBuild();

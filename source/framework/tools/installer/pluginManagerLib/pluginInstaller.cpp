@@ -26,17 +26,19 @@ namespace pluginManager
 		// file that cannot be downloaded again is taken out by what it is.
 		//
 		// .bin and .mid because those are the two extensions the ROM loaders search for, and no
-		// build of ours ships either, so this can only ever find something somebody put there.
+		// build of ours ships either, so this can only ever find something somebody put there. Only
+		// the ones lying where a ROM lies, never a folder below - see ZipExtractor::romsInside.
 		// Documents/The Usual Suspects/<product>/roms/ because that is where the plugin looks
 		// anyway, and nothing in this program ever deletes from it.
 		void migrateRoms(const juce::File& _plugin, const std::string& _product)
 		{
-			if (!_plugin.isDirectory())
+			// Somebody else's plugin under the same name: nothing in there was put there for ours.
+			if (!_plugin.isDirectory() || !PlatformUtils::otherMaker(_plugin.getFullPathName().toStdString()).empty())
 				return;
 
 			const auto roms = juce::File(juce::String(PlatformUtils::romFolder(_product)));
 
-			for (const auto& file : _plugin.findChildFiles(juce::File::findFiles, true, "*.bin;*.mid"))
+			for (const auto& file : ZipExtractor::romsInside(_plugin))
 			{
 				if (!roms.isDirectory() && !roms.createDirectory().wasOk())
 					return;
@@ -68,7 +70,8 @@ namespace pluginManager
 
 				// Taking the original away is what drains the bundle, but it is the lesser half: the
 				// copy is already safe, and an install folder this user may not write to would fail
-				// here. Then the file stays where it was and the install carries it on as before.
+				// here. Then the file stays where it was: carried into the new bundle on Windows and
+				// Linux, left behind with the old one on macOS, where the copy is what is used.
 				const auto removed = file.deleteFile();
 
 				Log::write("Moved " + file.getFullPathName().toStdString() + " to " +
@@ -112,7 +115,7 @@ namespace pluginManager
 	                          const std::string& _archiveFile,
 	                          const ProgressCallback& _onProgress, const std::shared_ptr<bool>& _cancel,
 	                          const State& _installing, const Files& _files, std::string& _message,
-	                          const Pending& _pending)
+	                          const Pending& _pending, const DownloadedCallback& _onDownloaded)
 	{
 		if (_installing->exchange(true))
 		{
@@ -157,8 +160,10 @@ namespace pluginManager
 		if (needsRights && !ElevatedTask::isSupported())
 			return false;
 
+		// A name nothing else has: /tmp is shared, and a file left there under the same name by another
+		// user cannot be replaced by this one.
 		const auto tempZip = juce::File::getSpecialLocation(juce::File::tempDirectory)
-			.getChildFile(_asset.product + "_" + _asset.format + "_" + _asset.version + ".zip")
+			.getNonexistentChildFile(_asset.product + "_" + _asset.format + "_" + _asset.version, ".zip", false)
 			.getFullPathName().toStdString();
 
 		*_cancel = false;
@@ -168,6 +173,9 @@ namespace pluginManager
 			juce::File(tempZip).deleteFile();
 			return false;
 		}
+
+		if (_onDownloaded)
+			_onDownloaded(tempZip);
 
 		// What to look for in the archive: the Linux builds carry the plugin under a usr/local tree
 		// of their own, and what is installed is the plugin rather than the tree. The caller may
@@ -258,6 +266,13 @@ namespace pluginManager
 			return false;
 		}
 
+		// Found by its name alone, and the name is not ours alone.
+		if (const auto maker = PlatformUtils::otherMaker(path); !maker.empty())
+		{
+			_message = path + " is a plugin of the same name by somebody else (" + maker + "), so it was left as it is.";
+			return false;
+		}
+
 		const auto file = juce::File(juce::String(path));
 
 		if (_plugin)
@@ -303,7 +318,7 @@ namespace pluginManager
 	                              const std::string& _archiveFile, const Pending& _pending)
 	{
 		return run(_asset, _credentials, _targetDir, _archiveFile, _onProgress, m_cancel, m_installing,
-			m_lastFiles, _message, _pending);
+			m_lastFiles, _message, _pending, m_onDownloaded);
 	}
 
 	void PluginInstaller::installAsync(const Asset& _asset, const Credentials& _credentials, const std::string& _targetDir,
@@ -315,7 +330,7 @@ namespace pluginManager
 
 		juce::Thread::launch([_asset, _credentials, _targetDir, onProgress, onComplete, cancel = m_cancel,
 		                      installing = m_installing, files = m_lastFiles, archiveFile = _archiveFile,
-		                      pending = _pending]
+		                      pending = _pending, onDownloaded = m_onDownloaded]
 		{
 			// Progress arrives on this thread, so it is handed to the message thread as well.
 			ProgressCallback progress;
@@ -331,7 +346,7 @@ namespace pluginManager
 			std::string message;
 
 			const auto success = run(_asset, _credentials, _targetDir, archiveFile, progress, cancel,
-				installing, files, message, pending);
+				installing, files, message, pending, onDownloaded);
 
 			juce::MessageManager::callAsync([onComplete, success, message]
 			{

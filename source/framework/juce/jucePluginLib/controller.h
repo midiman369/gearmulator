@@ -30,9 +30,10 @@ namespace pluginLib
 
 		baseLib::Event<uint8_t> onCurrentPartChanged;
 
-		// _formatterFactory makes the texts of the parameters whose description has "toText": {"formatter": ...}
+		// _formatterFactory makes the texts of the parameters whose description has "toText": {"formatter": ...},
+		// _parameterDescVariant picks one of the json's "variants", see ParameterDescriptions
 		explicit Controller(Processor& _processor, const std::string& _parameterDescJsonFilename,
-			const ParameterDescriptions::FormatterFactory& _formatterFactory = {});
+			const ParameterDescriptions::FormatterFactory& _formatterFactory = {}, const std::string& _parameterDescVariant = {});
 		~Controller() override;
 
 		virtual void sendParameterChange(const Parameter& _parameter, ParamValue _value, pluginLib::Parameter::Origin _origin) = 0;
@@ -100,6 +101,10 @@ namespace pluginLib
 		}
 
 		virtual  std::vector<uint8_t> getPartsForMidiChannel(uint8_t _channel) { return {}; }
+
+		// A front panel LED for skins, 0 is off, 1 fully lit, linear. False if the device has no LED of that name.
+		// Any thread, skins read it while they render
+		virtual bool getLedBrightness(const std::string& _name, float& _brightness) const { return false; }
 
 		// Drops what the device sent that has not been parsed yet. After a state load, that describes the state
 		// before it and would overwrite the loaded one when it is parsed

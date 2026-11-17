@@ -149,6 +149,7 @@ namespace pluginLib::patchDB
 			const auto it = m_dataSources.find(_ds);
 			if (it == m_dataSources.end())
 				return;
+			m_cacheDirty = true;
 
 			const auto ds = it->second;
 
@@ -315,6 +316,9 @@ namespace pluginLib::patchDB
 
 	bool DB::setDataSourceMidiBankNumber(const DataSourceNodePtr& _ds, const uint32_t _midiBankNumber)
 	{
+		if (_midiBankNumber >= g_midiBankNumberCount)
+			return false;
+
 		{
 			std::unique_lock lock(m_dataSourcesMutex);
 
@@ -463,7 +467,12 @@ namespace pluginLib::patchDB
 		for (const auto& func : uiFuncs)
 			func();
 
-		if(isLoading() && !m_loader.pending())
+		// Loaded once every job queued for the loader ran, the running one included (pending() missed it), and not
+		// before startLoaderThread(): the timer runs from the construction on, in a Linux plugin on a message thread of
+		// its own, while the product's patch manager constructor still boots the device (BUG-10514). Done is read
+		// first, a job queues the jobs it adds before it counts as done
+		const auto done = m_loaderJobsDone.load();
+		if(isLoading() && done && done == m_loaderJobsQueued.load())
 		{
 			m_loading = false;
 			onLoadFinished();
@@ -915,8 +924,8 @@ namespace pluginLib::patchDB
 
 	void DB::startLoaderThread(const juce::File& _migrateFromDir/* = {}*/)
 	{
-		m_loader.start();
-
+		// queued before the start: jobs queued earlier must not all be done before this one is queued, uiProcess()
+		// would take that for the end of the load
 		runOnLoaderThread([this, _migrateFromDir]
 		{
 			if(!g_cacheEnabled || !loadCache())
@@ -962,6 +971,8 @@ namespace pluginLib::patchDB
 				}
 			}
 		});
+
+		m_loader.start();
 	}
 
 	void DB::stopLoaderThread()
@@ -1109,6 +1120,9 @@ namespace pluginLib::patchDB
 				addDsToList();
 				loadPatchModifications(ds, patches);
 				addPatches(patches);
+				// A source that had to be loaded is not in the cache yet (or was
+				// dropped from it): the cache needs rewriting at shutdown.
+				m_cacheDirty = true;
 			}
 		}
 	}
@@ -1252,14 +1266,8 @@ namespace pluginLib::patchDB
 			{
 				for (const auto& patch : ds->patches)
 				{
-					if(patch->hash == reqPatch->hash)
+					if(matchesPatchContent(reqPatch, patch))
 						results.insert(patch);
-					else if(patch->sysex.size() == reqPatch->sysex.size() && patch->getName() == reqPatch->getName())
-					{
-						// if patches are not 100% identical, they might still be the same patch as unknown/unused data in dumps might have different values
-						if(equals(patch, reqPatch))
-							results.insert(patch);
-					}
 				}
 			}
 
@@ -1347,6 +1355,15 @@ namespace pluginLib::patchDB
 		return true;
 	}
 
+	bool DB::matchesPatchContent(const PatchPtr& _requestPatch, const PatchPtr& _patch) const
+	{
+		if(_patch->hash == _requestPatch->hash)
+			return true;
+
+		// if patches are not 100% identical, they might still be the same patch as unknown/unused data in dumps might have different values
+		return _patch->sysex.size() == _requestPatch->sysex.size() && _patch->getName() == _requestPatch->getName() && equals(_patch, _requestPatch);
+	}
+
 	void DB::updateSearches(const std::vector<PatchPtr>& _patches)
 	{
 		std::shared_lock lockSearches(m_searchesMutex);
@@ -1362,7 +1379,9 @@ namespace pluginLib::patchDB
 
 			for (const auto& patch : _patches)
 			{
-				const auto match = search->request.match(*patch);
+				// a search by content matches by content here too, SearchRequest::match() does not look at it
+				const auto& reqPatch = search->request.patch;
+				const auto match = reqPatch ? matchesPatchContent(reqPatch, patch) : search->request.match(*patch);
 
 				bool countChanged;
 
@@ -1590,6 +1609,11 @@ namespace pluginLib::patchDB
 				const auto rom = var["rom"].toString().toStdString();
 
 				const auto midiBankNumber = static_cast<uint32_t>(static_cast<int>(var["midiBankNumber"]));
+
+				// out of reach of a bank select, such as the bank index that the ROM Arrangements of the Virus had as
+				// their MIDI bank number up to 2.2.27
+				if(midiBankNumber >= g_midiBankNumberCount)
+					continue;
 
 				// try to apply immediately if datasource already exists
 				const auto it = m_dataSources.find(key);
@@ -2204,7 +2228,8 @@ namespace pluginLib::patchDB
 				}
 				ds->patches.clear();
 
-				if (ds->midiBankNumber != g_invalidMidiBankNumber)
+				// a number out of reach of a bank select is dropped, see loadJson
+				if (ds->midiBankNumber < g_midiBankNumberCount)
 					m_pendingMidiBankAssignments.insert({midiBankKey(*ds), ds->midiBankNumber});
 			}
 

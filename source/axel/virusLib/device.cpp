@@ -73,6 +73,13 @@ namespace virusLib
 		// as we do not connect them
 		m_midiTimestamps = m_rom.isTIFamily() && m_mc->enableMidiTimestamps();
 
+		// a busy TI DSP hands notes to the other one, which plays them late (BUG-10510)
+		if(m_dsp2)
+		{
+			DspMultiTI::disableNoteHandover(*m_dsp);
+			DspMultiTI::disableNoteHandover(*m_dsp2);
+		}
+
 		// the OS loses what does not fit into its input rings, send it only as much as they hold (EMU-239)
 		m_mc->enableHdi08FlowControl();
 
@@ -85,6 +92,12 @@ namespace virusLib
 		// The arpeggiator is played in C++ once the plugin asks for it, see processArpeggiators()
 		if(!m_arpeggiator.readPatterns(m_dsp->getMemory(), m_rom.getModel()))
 			LOG("Arpeggiator patterns not found in this firmware, the firmware keeps playing its own arpeggiator");
+
+		// The TI family OS plays an event at its timestamp up to 1023 samples ahead (x:$5586c in OS 5.1.7, it may
+		// take less, and holds what is further ahead back until it is within), ours is up to 127 ahead already. The
+		// C++ arpeggiator plays its notes as far ahead as that leaves, as the firmware plays its own (BUG-10510)
+		if(m_midiTimestamps)
+			m_arpeggiator.setLead(0x3ff - 127);
 	}
 
 	Device::~Device()
@@ -246,6 +259,30 @@ namespace virusLib
 	bool Device::getState(std::vector<uint8_t>& _state, const synthLib::StateType _type)
 	{
 		return m_mc->getState(_state, _type);
+	}
+
+	bool Device::getStateWithPendingMidi(std::vector<uint8_t>& _state, const synthLib::StateType _type, const std::vector<synthLib::SMidiEvent>& _pendingMidi)
+	{
+		if(!getState(_state, _type))
+			return false;
+
+		// What the editor sent waits for the next process() call: a Multi from the patch manager, a play mode switch, a
+		// parameter edit. A host that saves without processing the plug-in in between, a bypassed one for example, lost
+		// it (BUG-10568). Behind the state, a restore applies it the way process() would have
+		for (const auto& ev : _pendingMidi)
+		{
+			const auto& s = ev.sysex;
+
+			if(s.size() < 7 || s[1] != 0x00 || s[2] != 0x20 || s[3] != 0x33)
+				continue;
+
+			const auto cmd = s[6];
+
+			if(cmd == DUMP_SINGLE || cmd == DUMP_MULTI || (cmd >= PAGE_6E && cmd <= PAGE_D))
+				_state.insert(_state.end(), s.begin(), s.end());
+		}
+
+		return true;
 	}
 
 	bool Device::setState(const std::vector<uint8_t>& _state, synthLib::StateType _type)

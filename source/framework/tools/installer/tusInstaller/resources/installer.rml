@@ -12,6 +12,7 @@
 		<span class="header-spacer"></span>
 		<button id="refresh-button" class="header-button"><svg class="btn-icon" src="icon_refresh.svg"/>Refresh</button>
 		<button id="preferences-button" class="header-button"><svg class="btn-icon" src="icon_settings.svg"/>Preferences</button>
+		<button id="offline-button" class="header-button"><svg class="btn-icon" src="icon_folder.svg"/>Offline</button>
 		<button id="donator-login" class="header-button"><svg class="btn-icon" src="icon_login.svg"/>Donator login</button>
 	</div>
 
@@ -49,13 +50,14 @@
 				<img class="thumbnail-image" src="placeholder.png"/>
 			</div>
 			<div class="plugin-info">
-				<!-- What we call it, with the effect chip beside it. The chip is a product of its own
-				     in the archives and is not in the row at all for a plugin that has none; ticking it
-				     makes every column below about the two of them: what is installed, what the button
-				     offers, and what it then fetches. -->
+				<!-- What we call it, with the two parts beside it for a plugin that has an effect build:
+				     the instrument and the effect version, a product of its own in the archives. Either
+				     may be unticked, but not both, and what is ticked is what every column below is
+				     about: what is installed, what the button offers, and what it then fetches. Not in
+				     the row at all for a plugin without an effect build. -->
 				<div class="plugin-title">
 					<div class="plugin-name">Plugin Name</div>
-					<span class="fx-toggle format-label">FX</span>
+					<span class="part-toggles"><span class="instr-toggle format-label"><span class="tick-box"><svg class="tick" src="icon_check.svg"/></span>Instrument</span><span class="fx-toggle format-label"><span class="tick-box"><svg class="tick" src="icon_check.svg"/></span>FX version</span></span>
 				</div>
 				<!-- What the hardware is, always on its own line. Beside the name it fitted on some rows
 				     and not on others, and a row that looks unlike the one above it reads worse than a
@@ -86,11 +88,12 @@
 
 	     It lives outside the list because the list is emptied on every refresh. -->
 	<div id="format-column-template" class="format-col">
-		<!-- Both state icons are here and the stylesheet shows the one that applies, so which icon
-		     means what stays out of the C++. The name is written once, when the row is built - it is
-		     what the column is for and never changes afterwards. All on one line, because the
-		     whitespace between the tags would otherwise collapse to a space inside the chip. -->
-		<span class="format-label checked"><span class="format-name">VST3</span><svg class="state-icon current" src="icon_check.svg"/><svg class="state-icon outdated" src="icon_update.svg"/></span>
+		<!-- The box says whether the format is ticked, the arrow after the name that a newer version
+		     is waiting; the stylesheet shows each when it applies, so which icon means what stays out
+		     of the C++. The name is written once, when the row is built - it is what the column is for
+		     and never changes afterwards. All on one line, because the whitespace between the tags
+		     would otherwise collapse to a space inside the chip. -->
+		<span class="format-label"><span class="tick-box"><svg class="tick" src="icon_check.svg"/></span><span class="format-name">VST3</span><svg class="state-icon outdated" src="icon_update.svg"/></span>
 		<span class="format-installed">-</span>
 		<span class="version-select">0.0.0</span>
 		<span class="format-buttons">
@@ -132,10 +135,10 @@
 			<div id="detail-text">
 				<div id="detail-description"></div>
 				<div id="detail-meta"></div>
-				<!-- The effect build, which is a product of its own in the archives and goes into the
-				     same folder as the plugin. Named after it in C++, and not in the row at all for a
-				     plugin that has none. Ticking it makes every row below about the two of them. -->
-				<span id="detail-fx-toggle" class="fx-toggle format-label">FX</span>
+				<!-- The instrument and its effect build, which is a product of its own in the archives
+				     and goes into the same folder. Named after the two in C++, and not on the page at all
+				     for a plugin without an effect build. What is ticked is what every row below is about. -->
+				<span id="detail-part-toggles" class="part-toggles"><span id="detail-instr-toggle" class="instr-toggle format-label"><span class="tick-box"><svg class="tick" src="icon_check.svg"/></span><span class="part-name">Instrument</span></span><span id="detail-fx-toggle" class="fx-toggle format-label"><span class="tick-box"><svg class="tick" src="icon_check.svg"/></span><span class="part-name">FX</span></span></span>
 			</div>
 		</div>
 		<div id="detail-formats">
@@ -241,6 +244,22 @@
 			</div>
 		</div>
 
+		<!-- Where backups go. Pointing it into a folder a cloud service synchronises is how a backup
+		     leaves this computer: this program does not talk to any such service itself. -->
+		<div id="backup-folder-section">
+			<div id="backup-folder-title">Backups</div>
+			<div id="backup-folder-intro">Where backups are kept. A folder that Dropbox, OneDrive, iCloud Drive or Google Drive synchronises keeps them off this computer as well. Backups made before a change stay in the folder they were made in.</div>
+			<div id="backup-folder-list"></div>
+		</div>
+
+		<!-- Where every build an install downloads is kept as well, as a folder to install from
+		     without a network - see the Offline page (BUG-10543). Empty keeps nothing. -->
+		<div id="download-folder-section">
+			<div id="download-folder-title">Keep downloads</div>
+			<div id="download-folder-intro">Every build that is installed is also kept in this folder, with the picture and the files its product brings. Offline › Install from a folder installs from it without a network, on this computer or on another one. Empty keeps nothing.</div>
+			<div id="download-folder-list"></div>
+		</div>
+
 		<!-- The one login that is not per plugin: it opens every internal build at once, so it is a
 		     button rather than a list. A build that was not told where the internal channel is has
 		     no use for it, and then this is not here at all. -->
@@ -260,6 +279,64 @@
 				</div>
 			</div>
 			<button id="donator-login-add" class="dialog-button primary">Add a donator login</button>
+		</div>
+	</div>
+
+	<!-- Installing without a network (BUG-10543): from a folder, and preparing such a folder - for this
+	     computer or for another one, which may run another system. Filled in C++ from the catalog. -->
+	<div id="offline-page" class="page">
+		<div class="page-header">
+			<button id="offline-back" class="header-button">Back</button>
+			<span class="page-title">Offline</span>
+		</div>
+
+		<div class="offline-section">
+			<div class="offline-title">Install from a folder</div>
+			<div class="offline-intro">A folder prepared below, the folder the downloads are kept in, or any folder of our archives. The list then shows what is in that folder and installs from it, without a network. A Plugin Manager started from inside such a folder opens it by itself.</div>
+			<div class="offline-row">
+				<span class="offline-label">Installing from</span>
+				<span id="offline-source" class="offline-value">the build server</span>
+			</div>
+			<div class="offline-row">
+				<span class="offline-label"></span>
+				<button id="offline-open" class="dialog-button primary"><svg class="btn-icon" src="icon_folder.svg"/>Choose a folder</button>
+				<button id="offline-online" class="dialog-button">Back to the build server</button>
+			</div>
+		</div>
+
+		<div class="offline-section">
+			<div class="offline-title">Prepare a folder</div>
+			<div class="offline-intro">The newest build of every product and format ticked here, for the system it is for, with the pictures and the files the products bring and the Plugin Manager for that system. Take the folder to the other computer, start the Plugin Manager in it and install. Run it again on the same folder to add only what is new. An effect version comes with its plugin, whose row in the list installs it.</div>
+			<div class="offline-row">
+				<span class="offline-label">Folder</span>
+				<input id="offline-folder" class="preference-path" type="text"/>
+				<button id="offline-browse" class="dialog-button"><svg class="btn-icon" src="icon_folder.svg"/>Browse</button>
+			</div>
+			<div class="offline-row">
+				<span class="offline-label">System</span>
+				<span id="offline-systems" class="offline-chips"></span>
+			</div>
+			<div class="offline-row">
+				<span class="offline-label">Formats</span>
+				<span id="offline-formats" class="offline-chips"></span>
+			</div>
+			<div class="offline-row">
+				<span class="offline-label">Products</span>
+				<span id="offline-products" class="offline-chips"></span>
+			</div>
+			<div class="offline-row">
+				<span class="offline-label">Also</span>
+				<span class="offline-chips"><span id="offline-manager" class="format-label checked"><span class="tick-box"><svg class="tick" src="icon_check.svg"/></span>The Plugin Manager</span></span>
+			</div>
+			<div class="offline-row">
+				<span class="offline-label"></span>
+				<button id="offline-write" class="dialog-button primary">Write the folder</button>
+				<span id="offline-status" class="offline-value"></span>
+			</div>
+			<div class="offline-row">
+				<span class="offline-label"></span>
+				<progress id="offline-progress" class="progress-bar offline-progress" direction="right" value="0" max="100"/>
+			</div>
 		</div>
 	</div>
 

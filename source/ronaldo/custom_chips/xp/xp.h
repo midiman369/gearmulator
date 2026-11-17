@@ -308,6 +308,17 @@ namespace xpLib
 		void stepVoiceRamps(size_t _voiceIndex, VoiceState& _voice);
 		bool acceptVoiceEvent(size_t _voiceIndex, uint8_t _reason);
 		void raiseVoiceRampTerminalEvent(size_t _voiceIndex, uint32_t& _control, uint8_t _reason);
+		struct RampFamily
+		{
+			uint32_t& control;
+			uint32_t& current;
+			uint32_t& destination;
+			uint32_t* step;                  // the linear step register, nullptr for the families without one
+			uint8_t reason;
+			uint32_t quantum;                // 4 for TVF-Q, 1 otherwise
+			bool linearReportsInService;     // TVF-F and amp; pitch reports on the next slot like the log curve
+		};
+		void serviceLogLinearRamp(size_t _voiceIndex, const RampFamily& _ramp, uint64_t _counter);
 		void raiseVoiceMuteEvent(size_t _voiceIndex, VoiceState& _voice);
 		uint8_t readVoiceWaveByte(const VoiceState& _voice, uint32_t _address) const;
 		uint16_t readVoiceSampleFromCache(const VoiceState& _voice, uint32_t _address) const;
@@ -317,6 +328,7 @@ namespace xpLib
 		void raiseVoiceLoopMarkerEvent(size_t _voiceIndex, VoiceState& _voice);
 		bool voiceAddressRunsReverse(const VoiceState& _voice) const;
 		bool voiceUses16BitWaveBus(const VoiceState& _voice) const;
+		size_t preloadForwardLoopWords(size_t _voiceIndex, VoiceState& _voice, size_t _maxCells);
 		uint16_t encodeVoiceSample(const VoiceState& _voice, uint8_t _mantissa, uint8_t _exponent) const;
 		int32_t decodeVoiceDelta(const VoiceState& _voice, uint16_t _encoded) const;
 		int32_t interpolateVoice(const VoiceState& _voice, uint32_t _phase) const;
@@ -330,8 +342,8 @@ namespace xpLib
 		Dsp::StepRequest dspStepRequest() const;
 		void finishSample();
 		void prepareMixer(size_t _voiceCount);
-		void refillVoiceCell(size_t _voiceIndex, VoiceState& _voice);
-		void refillVoicePair(size_t _voiceIndex, VoiceState& _voice);
+		size_t fetchVoiceWord(size_t _voiceIndex, VoiceState& _voice, size_t _slot, size_t _limit);
+		void refillVoiceFifo(size_t _voiceIndex, VoiceState& _voice);
 		uint16_t readWaveRom(uint16_t _address);
 
 		State m_state{};

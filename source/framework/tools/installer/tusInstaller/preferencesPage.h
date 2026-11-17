@@ -21,7 +21,7 @@ namespace juceRmlUi { class RmlComponent; }
 namespace pluginManager
 {
 	// Where each format is installed - one row per format, with a file browser and a way back to the
-	// platform's default - and which donator logins are stored, since a plugin that is not published
+	// platform's default - where backups go, and which donator logins are stored, since a plugin that is not published
 	// is known by nothing but the folder one of those opens.
 	//
 	// Also what changing a location left behind, because this is the page that invites the change:
@@ -48,14 +48,27 @@ namespace pluginManager
 		void save() const { m_pluginManager.getInstallPaths().save(); }
 
 	private:
+		// What a row sets: where a format goes, or one of the two folders that are rows like the others
+		// in every other way.
+		enum class Kind
+		{
+			Format,
+			Backups,
+			Downloads		// where the downloads are kept, empty for none (BUG-10543)
+		};
+
 		struct Row
 		{
+			Kind kind = Kind::Format;
 			PluginFormat format = PluginFormat::Count;
 			Rml::ElementFormControlInput* path = nullptr;
 			Rml::Element* note = nullptr;
 		};
 
-		void addRow(PluginFormat _format);
+		void addRow(Kind _kind, PluginFormat _format, Rml::Element& _parent);
+		std::string pathOf(const Row& _row) const;
+		bool isCustom(const Row& _row) const;
+		void storePath(const Row& _row, const std::string& _path) const;
 		void buildDonatorLogins();
 		void buildStrayInstalls();
 		void onRemoveStrayInstall(const InstalledPlugins::Entry& _entry);

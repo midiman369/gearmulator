@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
 
 namespace pluginManager
@@ -86,4 +87,27 @@ namespace pluginManager
 	// not still offers to fetch it. Something missing comes before something behind, and a
 	// reinstall is what is left when there is nothing either of them needs.
 	InstallAction combineInstallActions(InstallAction _plugin, InstallAction _fx);
+
+	// Whether installing or upgrading a format takes one of its two parts along, the instrument or its
+	// effect build: there has to be a build of it, and either it was asked for - its chip - or it is
+	// installed already. An installed part is kept in step with the other, asked for or not. Going by
+	// the chip alone, which for the effect build is off until somebody turns it on, left it out of date
+	// while "Updates available" counted it: the plugin stayed in that group after an upgrade and its
+	// effect build was never upgraded (BUG-10488). The instrument is the same since it became optional
+	// (BUG-10562). Removing goes by the chips alone, so nothing is taken away that was not asked for.
+	bool includesBuild(bool _offered, bool _wanted, bool _installed);
+
+	// What the button of one format offers for its two parts, each counted only while it is included -
+	// see includesBuild. Empty when neither is: with only the effect build ticked, a format that it does
+	// not come in has nothing to install, and offering the instrument there would install what nobody
+	// asked for.
+	std::optional<InstallAction> columnAction(bool _withPlugin, InstallAction _plugin, bool _withFx, InstallAction _fx);
+
+	// Whether the button of a column fetches one of the parts it covers - the plugin or its effect
+	// build - given what that part needs (_part) and what the column offers for the two (_column). A
+	// column that offers an install, upgrade or downgrade fetches the parts that need it and leaves the
+	// current one alone: downloading a plugin that is up to date again, only because its effect build
+	// was behind, was a reinstall nobody asked for (BUG-10486). A column that offers a reinstall, which
+	// means everything in it is current, reinstalls all of it, because that is what its button says.
+	bool fetchesPart(InstallAction _part, InstallAction _column);
 }

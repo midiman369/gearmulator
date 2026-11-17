@@ -57,6 +57,8 @@ namespace emu88Lib
             return RomDevice::VeGsPro;
         case DeviceModel::Sk88Pro:
             return RomDevice::Sk88Pro;
+        case DeviceModel::Sc880:
+            return RomDevice::Sc880;
         case DeviceModel::Sc8850:
             return RomDevice::Sc8850;
         case DeviceModel::Sc55Mk2:
@@ -89,6 +91,8 @@ namespace emu88Lib
             return RomDevice::Cm32ln;
         case DeviceModel::Mv30:
             return RomDevice::Mv30;
+        case DeviceModel::ProE:
+            return RomDevice::ProE;
         }
         return RomDevice::Sc88;
     }
@@ -120,7 +124,8 @@ namespace emu88Lib
     {
         const auto inventory = scan();
         const bool sk88Pro = _device == RomDevice::Sk88Pro;
-        if ((_device != RomDevice::Sc88Pro && _device != RomDevice::VeGsPro && !sk88Pro) ||
+        if ((_device != RomDevice::Sc88Pro && _device != RomDevice::VeGsPro && _device != RomDevice::Sc880 &&
+             !sk88Pro) ||
             !inventory.isComplete(_device))
             return {};
 
@@ -238,6 +243,18 @@ namespace emu88Lib
             if (!inventory.read(result.waves[i], RomDevice::Mv30, RomSlot::Wave, i))
                 return {};
         return result.isValid() ? result : Mv30RomSet{};
+    }
+
+    ProERomSet RomLoader::findProERomSet()
+    {
+        const auto inventory = scan();
+        ProERomSet result;
+        if (!inventory.read(result.program, RomDevice::ProE, RomSlot::Program))
+            return {};
+        for (uint8_t i = 0; i < result.patterns.size(); ++i)
+            if (!inventory.read(result.patterns[i], RomDevice::ProE, RomSlot::Data, i))
+                return {};
+        return result.isValid() ? result : ProERomSet{};
     }
 
     LaRomSet RomLoader::findLaRomSet(const LaModel _model)

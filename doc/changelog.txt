@@ -11,6 +11,149 @@ Framework:
 - [Imp] BUG-10320 Skins can show level meters: audio.getOutputLevel returns the
         peak and RMS level of every output channel to Lua.
 
+- [Imp] BUG-10341 Skins can read the current pitch bend and channel pressure of
+        every MIDI channel in Lua: midi.getPitchBend and getChannelPressure.
+
+- [Imp] BUG-10438 Skins can list, show and switch the ROMs in Lua and are told
+        when another ROM gets selected: rom.getNames, getSelected, select and
+        onChange.
+
+- [Imp] The patch manager shows the patches that come with a release without
+        being told where they are: a folder named "patches" in the plugin's
+        folder in Documents/The Usual Suspects is added as a data source.
+
+- [Imp] BUG-10195 Clicking a slider's track moves the slider there again, a drag
+        continues from there. Dragging the slider's knob, or holding Shift, Ctrl
+        or Alt while clicking, still changes the value from where it is.
+
+- [Fix] BUG-10514 Linux: a plugin could crash while it was loaded when its ROM
+        was installed, for example the VST3 versions of Nodal Red 2x, Vavra and
+        Xenia.
+
+- [Fix] BUG-10518 The standalone versions crashed right after they were started,
+        on Windows without showing a window.
+
+- [Fix] BUG-10530 Changing the skin could crash the plugin, more often with the
+        RmlUi debugger turned on.
+
+- [Fix] EMU-277 "Reboot Device" in the MIDI settings now finds a ROM that was
+        copied into the ROM folder after the plugin was loaded, the plugin no
+        longer has to be loaded again. The selected ROM stays selected.
+
+- [Fix] #278 Closing the editor while the Patch Manager was still searching left
+        that search registered for good. Every later bank load or patch change
+        had to scan it, so the CPU load grew a bit with every such close.
+
+- [Fix] BUG-10382 The value tooltip also appeared for buttons, often away from
+        the button and over other controls. It is shown for knobs and sliders
+        only again.
+
+- [Fix] The value tooltip of a knob stayed empty for values written with angle
+        brackets, for example a panorama of "L< 50.0 %" or "<0>" in OsTIrus.
+
+- [Fix] BUG-10219 The patch name could not be renamed with a double click while
+        the name of a parameter was shown over it, for example in the OsTIrus
+        skin right after a parameter was changed.
+
+- [Fix] BUG-10441 With the software renderer, an element with a CSS filter was
+        not drawn at all, for example a big rotary of a skin that brightens it.
+
+- [Fix] BUG-10441 A skin that uses CSS filters no longer floods the log with
+        "Could not compile filter" on renderers without filter support.
+
+- [Fix] Without a configured refresh rate limit, the OpenGL renderer draws the
+        user interface at 30 Hz again, 60 Hz on NVIDIA and AMD graphics and on
+        macOS, instead of as often as the display refreshes.
+
+- [Fix] BUG-10180 Lock Regions are saved with the project and locked again when
+        it is loaded. A project saved by an earlier version loads with nothing
+        locked, as before.
+
+- [Fix] The MIDI ports chosen in the settings open again by themselves when
+        their device is plugged in again or comes back after a USB hiccup. A
+        port whose device is not connected stays selected, also in the project,
+        and opens once the device is there.
+
+- [Fix] Windows: a MIDI output whose device was not connected sent everything
+        to the Microsoft GS Wavetable Synth instead.
+
+- [Fix] A MIDI input that was selected once stayed open until the plugin was
+        unloaded, also after another one was selected. On Windows, selecting
+        it again after its device was plugged in again received nothing.
+
+- [Fix] BUG-10561 macOS: the plugins no longer export the symbols of JUCE and of
+        their other code, only their entry points. A host or another plugin
+        that is built with JUCE too could otherwise share parts of JUCE with
+        the plugin and fail while it scans or loads it.
+
+- [Fix] BUG-10559 The plugin window no longer shows a white (Windows) or red
+        (Bitwig on macOS) flash before the UI appears, it stays black until
+        the first frame.
+
+- [Imp] BUG-10527 Linux: the standalone versions can play through JACK besides
+        ALSA, and with pipewire-jack straight into PipeWire.
+
+- [Fix] macOS: a standalone version could stay silent until it was restarted
+        after another app changed the sample rate of the audio device, for
+        example when Logic Pro was opened.
+
+- [Fix] VST2: protect audio buffers when a host suspends or resumes the plugin
+        concurrently with audio processing, avoiding a crash seen in VSTHost.
+
+- [Imp] DSPBridge: The interface between the plugins and DSPBridgeServer changed
+        again in this version, and with it the bridge protocol version: update
+        DSPBridgeServer together with the plugins. A server of 2.2.27 or older
+        does not work with the plugins of this version, and this server does
+        not work with plugins of 2.2.27 or older.
+
+- [Fix] The latency reported to the host could be a sample short: the
+        emulator's own latency was cut down to whole samples before the rest
+        was added. It is now rounded once.
+
+- [Fix] MCP server: stopping it, or closing the plugin, could hang while a
+        client kept its connection open.
+
+- [Fix] Turning the mouse wheel over a dropdown or a radio button group also
+        scrolled the view around it.
+
+- [Fix] Dropdowns raced through their entries when scrolled with a trackpad
+        or a smooth-scrolling mouse. They now move one entry per wheel notch.
+
+- [Fix] A dropdown bound to a parameter without a list of values showed an
+        empty menu, and opening the editor set that parameter to its lowest
+        value. Where the range does not start at zero, the entries showed the
+        text of a neighbouring value.
+
+- [Fix] Patch Manager: a ROM bank that was loaded instead of taken from the
+        cache never went into it, so it was loaded again at every start.
+
+- [Fix] Patch Manager: the name of a ROM bank with a slash in it was cut at
+        the slash.
+
+- [Fix] macOS: while a window was resized, the user interface was squashed
+        for a moment. The frame at the new size now reaches the screen
+        together with the resize.
+
+- [Fix] A skin that changes its own size could show one frame cut off, or
+        with an empty band, before the window followed.
+
+- [Fix] The link and lock icons of a parameter could be drawn away from
+        their control when the element around the control is not
+        positioned.
+
+- [Imp] A skin that is no longer part of the plugin, and is not in the
+        skins folder either, is replaced by the default skin without a
+        warning each time the editor opens.
+
+- [Imp] Settings: the option to enable advanced options is hidden when a
+        plugin has none.
+
+- [Imp] Skins: a dropdown with drag-step="N" steps through its entries while
+        it is dragged, one entry per N dp, and a click still opens its menu.
+        With group-size="N" a long list opens as submenus of N entries.
+
+- [Imp] Escape cancels a drag and drop.
+
 Osirus/OsTIrus:
 
 - [Imp] EMU-56 The arpeggiator follows the host exactly: its notes are placed on
@@ -20,10 +163,168 @@ Osirus/OsTIrus:
         on a DSPBridge server. Arp>Matrix on the Virus TI still follows MIDI
         clock.
 
+- [Imp] BUG-10341 Skins can read the front panel LEDs in Lua: leds.get returns
+        the brightness of the LFO LEDs and, on the Virus TI, of the logo.
+
+- [Fix] #285 In single mode, MIDI Learn mappings with automatic part selection
+        and the MIDI Learn indicators only worked on MIDI channel 1. They now
+        follow the MIDI channel set in the Virus' global settings.
+
+- [Fix] #290 A controller dump requested via sysex sent the poly pressure
+        parameters (page B) of every part on the first MIDI channel, so a
+        receiver applied them to part 1. They now go out on the channel of the
+        part, as the control changes (page A) do.
+
+- [Fix] #264 When the host loads a project or a preset of its own, for example
+        an NKS preset in Komplete Kontrol, the Patch Manager now selects the
+        patch that the plugin plays. It kept the patch that was selected before,
+        or selected a wrong one.
+
+- [Fix] BUG-10183 A part that was switched off in multi mode played again when
+        the project was loaded or the play mode was changed. Its Note Steal
+        setting and its MIDI Volume, Hold Pedal, Keyb To Midi and Program
+        Change switches went back the same way.
+
+- [Fix] BUG-10180 With regions locked, loading a project or a host preset kept
+        values from before the load in the parts that had locked regions.
+
+- [Fix] Singles and multis exported from the Patch Manager, to a file or by
+        dragging them out, had wrong checksums, so a hardware Virus ignored
+        them.
+
+- [Fix] EMU-294 The plugin sent what its editor reads from the emulator to the
+        MIDI output selected in the MIDI settings as well, for example all RAM
+        banks and the global settings whenever the plugin or a project was
+        loaded. A Virus connected there stored them over its own. These answers
+        now stay inside the plugin. What the emulator plays, arpeggiator notes
+        for example, still goes to the MIDI output, and a request that arrives
+        at the MIDI input is still answered there.
+
+- [Fix] BUG-10550 MIDI channels were shown as 0-15 instead of 1-16: on the Multi
+        page of Osirus, and in both Osirus and OsTIrus for the global MIDI
+        channel parameter that the host shows for automation.
+
+- [Fix] A patch name with "<" in it, for example ">>INPUT<<", was cut off in the
+        patch name display and on the part buttons. Renaming a patch with "&" in
+        its name started with "&amp;" in the text field.
+
+- [Fix] BUG-10568 Some multis came back in single mode when a project was
+        reopened or a track was duplicated: the plugin left the multi out of
+        what it saved. A multi, a play mode change or a parameter edit made
+        while the host did not process the plugin, for example while it was
+        bypassed, was not saved either.
+
+Osirus:
+
+- [Imp] BUG-10183 Galaxpel skin: every part on the Multi page has Mute and Solo
+        buttons. Mute switches the part off, as the Enable button did that it
+        replaces. Solo plays only the soloed parts, parts muted by hand stay
+        muted when the solo ends. A solo is saved with the project.
+
+- [Fix] #49 The Arp Clock selection showed the values of the LFO clock: it
+        offered "Off", which the arpeggiator does not have, and labelled every
+        setting with a different note value than the one it plays, 1/16 as
+        1/8 for example. It now shows 1/128 to 1/2 as on the hardware.
+
+- [Fix] BUG-10184 The Patch Manager showed the ROM Arrangements with
+        "[Bank 4294901761]", a MIDI bank number that no bank select reaches.
+        They have no MIDI bank number now, one can be assigned to load them by
+        program change.
+
 OsTIrus:
 
 - [Fix] A changed Arp Mode was lost when the patch was loaded again, for example
         with the project: the patch played the arpeggiator mode it had before.
+
+- [Fix] BUG-10510 Notes keep time again with a patch that keeps a DSP busy:
+        since 2.2.27 the TI handed notes to its second DSP then, as the
+        hardware does, and that DSP played them about 17 ms late. Each DSP
+        plays its notes itself now, as up to 2.2.25, so such a patch has the
+        voices of one DSP.
+
+- [Imp] #216 TrancyTI skin: knobs of bipolar parameters, such as Key Follow,
+        the LFO amounts or Panorama, light their value ring from the centre to
+        either side instead of from the left end.
+
+- [Imp] BUG-10519 EQ, Arpeggiator, Delay and Reverb Enable, the global
+        switches, are host parameters now, for automation and for skins. They
+        showed "Disabled" while they were on, and a project did not save them.
+        As in the firmware, switching Delay or Reverb off takes effect with the
+        next patch, switching on at once.
+
+Vavra/Xenia:
+
+- [Fix] EMU-294 The sounds the editor reads from the emulator went to the MIDI
+        output selected in the MIDI settings as well, and Vavra sent its sound
+        there after a program change. They now stay inside the plugin, a
+        request that arrives at the MIDI input is still answered there.
+
+Vavra:
+
+- [Fix] With voice expansion turned on, playback could crash the plugin when the
+        computer was busy.
+
+- [Fix] BUG-10184 An Arrangement loaded while Vavra was in single mode often lost
+        its Multi or parts of it, its name and MIDI channels for example, and
+        part 1 showed the sound that was loaded before in single mode.
+
+JE8086:
+
+- [Fix] BUG-10508 The Remote KBD CH of the JP-8080 had no effect: Split, Dual,
+        the arpeggiator and RPS could not be played via MIDI. The JP-8080 has a
+        second MIDI input, REMOTE KBD IN, and the plugin sent everything to MIDI
+        IN. MIDI on the Remote KBD CH (EDIT, MIDI) now arrives at REMOTE KBD IN
+        and plays the JP-8080 like its own controls, as the Remote Ctrl CH does
+        on the JP-8000. With ALL, the factory setting, that is every channel;
+        set a single channel to play the Upper and Lower parts on their own MIDI
+        channels.
+
+- [Fix] BUG-10512 Switching the ROM from the JP-8080 back to the JP-8000 set the
+        Remote Ctrl CH of the JP-8000 to OFF, so Split and the arpeggiator no
+        longer played via MIDI until the plugin was loaded again. A ROM switch
+        no longer hands the system settings of one model to the other, each
+        model keeps its own and gets them back when it is selected again, also
+        in a saved project.
+
+- [Fix] BUG-10512 The plugin set the Remote KBD CH of the JP-8080 to 5, so Split
+        and the arpeggiator played only from MIDI channel 5. It stays at ALL,
+        the factory setting, now, and a channel chosen in the editor is no
+        longer reset when a project is loaded. Projects saved with channel 5
+        get ALL.
+
+- [Fix] BUG-10528 A JP-8080 performance loaded from a file, such as a bulk dump
+        of the hardware, left Unison, Unison Detune, Patch Gain, Voice Modulator
+        Send and External Trigger of its patches as they were, and set three
+        Control depths of the amp (LFO 1, LFO 2, Attack) to wrong values
+        instead.
+
+- [Fix] BUG-10528 INC and DEC did nothing after the plugin was loaded, until a
+        patch was picked in the browser. With nothing picked there, they now
+        press INC and DEC of the synth (VALUE UP and DOWN of the JP-8000), and
+        the editor shows what the synth plays afterwards.
+
+- [Fix] BUG-10208 Clicking quickly through performances or patches sent every one
+        of them to the synth at MIDI speed, so it followed seconds later and its
+        display and PERFORM/PATCH SELECT did not react meanwhile. A performance
+        or patch that a newer click replaces is no longer sent.
+
+- [Fix] EMU-294 The system settings and the performance the editor reads from
+        the emulator went to the MIDI output selected in the MIDI settings as
+        well, whenever the plugin or a project was loaded or a patch was sent.
+        A JP-8000 or JP-8080 connected there took them over. They now stay
+        inside the plugin, a request that arrives at the MIDI input is still
+        answered there.
+
+NodalRed2x:
+
+- [Fix] BUG-10509 With enough voices playing, the voices of the second DSP cut in
+        and out on the left channel.
+
+- [Fix] EMU-294 The four slots the editor reads from the emulator went to the
+        MIDI output selected in the MIDI settings as well, whenever the plugin
+        or a project was loaded or a patch was sent. They now stay inside the
+        plugin, a request that arrives at the MIDI input is still answered
+        there.
 
 Plugin Manager:
 
@@ -34,6 +335,138 @@ Plugin Manager:
 - [Fix] With the team login, a product whose newest build went to donators only
         showed the changelog of the older internal build. The newer of the two is
         shown now.
+
+- [Fix] BUG-10493 The standalone of an effect version, such as OsirusFX, showed
+        as not installed after every install and was offered again. It is
+        installed beside the standalone of its plugin, and that is where it is
+        found now.
+
+- [Fix] BUG-10488 An installed effect version, such as OsirusFX, was only
+        upgraded while its FX chip was ticked, although "Updates available"
+        counted it: the product stayed in that group after an upgrade. An
+        installed effect version is now always upgraded together with its
+        plugin. The chip only decides whether one that is not installed yet
+        is installed.
+
+- [Imp] BUG-10488 The FX chip is labelled "FX version" and is drawn in the
+        accent colour when it is ticked.
+
+- [Fix] BUG-10486 Upgrading a product whose effect version was behind while the
+        plugin was up to date downloaded the plugin again as well. Only what is
+        missing or behind is downloaded now, from a column's button and from
+        "Install selected" and "Upgrade all" alike.
+
+- [Imp] BUG-10487 The name of a product with none of its formats ticked is shown
+        in grey, so it is easy to see which products "Install selected" leaves
+        out.
+
+- [Imp] BUG-10485 The folder backups are kept in can be changed in Preferences,
+        for example to a folder that Dropbox, OneDrive, iCloud Drive or Google
+        Drive synchronises, which keeps the backups off the computer as well.
+
+- [Fix] Another maker's plugin with the same file name as one of ours was
+        deleted when ours was installed over it, and its contents were copied
+        into our roms folder. It is now left alone: it does not show as
+        installed, an install into the same folder stops and says so, and an
+        uninstall does not remove it.
+
+- [Imp] BUG-10526 macOS: plugins are installed into the system-wide folders in
+        /Library/Audio/Plug-Ins by default, where the plugins of other makers
+        are, rather than into the user's own in ~/Library. Plugins installed
+        there before are still found and are upgraded where they are.
+
+- [Fix] BUG-10507 Linux: the rpm package could not be installed on distributions
+        whose libcurl does not version its symbols, such as Fedora: it required
+        libcurl.so.4(CURL_OPENSSL_4).
+
+- [Fix] BUG-10507 A download that could not be written, to a full disk for
+        example, was reported as a damaged archive. It now says that it could
+        not be written, and why.
+
+- [Fix] After the Plugin Manager updated itself, the formats ticked since it was
+        last refreshed were lost: formats unticked at the top came back ticked,
+        and "Install selected" installed builds nobody had asked for. What is
+        ticked is now saved as soon as it changes.
+
+- [Fix] Updating a plugin removed what you had kept inside it, sound sets in
+        the Osirus.vst3 folder for example: every file was moved into the roms
+        folder in Documents, out of its own folders, and the patch manager no
+        longer found them. On Windows and Linux they now stay where they are.
+        On macOS, where nothing may be added to a plugin, the update stops and
+        names them, so that you can move them elsewhere first. Only a .bin or
+        .mid ROM lying at the top of the plugin or next to its binary is still
+        moved to the roms folder, never one in a folder of its own.
+
+- [Imp] BUG-10562 A plugin that has an effect version shows two chips beside
+        its name, Instrument and FX version, and either of them can be
+        unticked: the effect version can now be installed on its own.
+
+- [Imp] BUG-10562 Every chip that can be ticked has a box with a tick in it, so
+        that what is ticked is no longer told apart from what is installed by
+        shades of grey alone. The tick that marked the newest installed
+        version is gone from the format chips, the version under the chip
+        turning green says it.
+
+- [Fix] BUG-10562 Every format chip of every plugin looked ticked when the Plugin
+        Manager started, although none was.
+
+- [Imp] BUG-10562 The window is wider, so that the six formats on macOS leave
+        enough room for the name of a plugin and its two chips, and the format
+        chips for their tick boxes.
+
+- [Fix] A product name, description, version or error message with "<" in it
+        was shown cut off or not at all.
+
+- [New] BUG-10543 Offline install: the new Offline page prepares a folder with
+        the newest builds of the products and formats you tick, for this
+        computer or another system, with their pictures, the files they bring
+        and the Plugin Manager for that system. On a computer without a
+        network, start the Plugin Manager in that folder and it installs from
+        there. Any folder of our archives can be chosen to install from as well.
+        An effect version is always written with its plugin, and a kept effect
+        version brings its plugin as well.
+
+- [New] BUG-10543 Preferences: downloads can be kept in a folder, which then
+        works as an offline install too.
+
+- [New] BUG-10543 tuspm: "export" prepares an offline install, "--folder"
+        installs from one, and "downloads" sets the folder downloads are kept
+        in.
+
+- [New] BUG-10495 The picture of an installed plugin has a ring that says
+        whether it has a ROM: green when the plugin found one it can use the
+        last time it started, red when it found none or there is no file where
+        it looks. The tooltip says where to put one.
+
+88emuPlayer:
+
+- [New] Devices: Added support for the SC-880.
+
+- [New] Devices: Added support for the PRO-E Arranger.
+
+- [Imp] SC-8820, SC-8850, NU-10B and MIIG5: more accurate CPU timing, with
+        the page mode and refresh of their DRAM and, on the MIIG5, the
+        instruction cache of its CPU.
+
+- [Fix] SC-55 family: the CPU read back what it last wrote to port 1 instead
+        of the levels of its input pins.
+
+- [Fix] SC-8850: the text on the display was laid out with the visible line
+        width instead of the line pitch the firmware sets.
+
+- [Imp] More accurate sound generation on all models with the XP chip, the
+        SC-88 series, SC-8820, SC-8850, NU-10B and MIIG5: envelope steps,
+        volume smoothing, effect sends, voice mutes and samples that loop
+        past their end.
+
+- [Imp] More accurate effects on the SC-88Pro, SC-8820, SC-8850 and the
+        models based on them: delay memory precision, the effect multiplier
+        and the effect input.
+
+- [Fix] MT-32/CM-32L: timbres with a ring-only partial structure (10-13) played
+        their first partial on top of the ring product, up to 5 dB too loud and
+        with the wrong timbre; a synth first partial was also ring modulated
+        with the previous voice.
 
 2.2.27:
 

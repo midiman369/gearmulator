@@ -31,6 +31,7 @@ namespace pluginManager
 	class ChangelogPage;
 	class DetailPage;
 	class InstallerDataProvider;
+	class OfflinePage;
 	class PreferencesPage;
 
 	// Owns the RmlUi document and turns the catalog into one row per product.
@@ -48,7 +49,8 @@ namespace pluginManager
 			List,
 			Detail,
 			Changelog,
-			Preferences
+			Preferences,
+			Offline
 		};
 
 		explicit InstallerDocument(InstallerDataProvider& _dataProvider);
@@ -90,6 +92,12 @@ namespace pluginManager
 		void loginFailed(const std::string& _message);
 		void closeLogin();
 
+		// What every row says is installed, read from the disk again. Cheap - it is the manifest and
+		// a look at whether the files are still there - and not a catalog refresh, which goes to the
+		// network and is not what changed. Also whenever the window is brought back, since what is
+		// on disk is changed elsewhere: a plugin started in a DAW says whether it found its ROM.
+		void refreshInstalled();
+
 	private:
 		// What the user has ticked. The rows own this while they exist, and every one of them is
 		// destroyed each time the catalog is read - so without a copy out here a refresh, or a walk
@@ -98,10 +106,14 @@ namespace pluginManager
 		// What is wanted rather than what is not, so that a product or a format seen for the first
 		// time arrives unticked (EMU-248). Everything ticked was what a first start showed, and a
 		// first "Install selected" then put every format of every product on the machine.
+		//
+		// The instrument is the one part that is wanted unless somebody says otherwise (BUG-10562), so
+		// only its being unticked is written down.
 		struct Selection
 		{
 			std::set<std::string> selectedFormats;
 			bool fx = false;
+			bool instr = true;
 		};
 
 		Rml::ElementDocument* getDocument() const;
@@ -133,6 +145,12 @@ namespace pluginManager
 
 		void createPreferencesPage(Rml::ElementDocument& _doc, PluginManager& _pluginManager);
 
+		void createOfflinePage(Rml::ElementDocument& _doc, PluginManager& _pluginManager);
+
+		// Installing from another folder, or from the server again with an empty one: the catalog is read
+		// again from there.
+		void setSource(const std::string& _folder);
+
 		// The way out of Preferences, whether by its Back button or by pressing Preferences again.
 		void closePreferences();
 
@@ -147,15 +165,15 @@ namespace pluginManager
 		// Label, colour and whether the section is there at all, from the two flags below.
 		void updateTeamLogin() const;
 
-		// Read off the rows before they are thrown away, put back on the ones built in their place.
+		// Read off the rows whenever one of them changes, and put back on the ones built in place of
+		// them after a refresh.
 		void rememberSelection();
 
 		// And keeps it between runs, because somebody who installs one format only has said so
 		// already and should not have to say it again every time the window opens.
 		//
-		// What is written down is what was turned OFF. A format that turns up later - a plugin that
-		// gains one, or a Mac, which has AU where the others do not - is then ticked like everything
-		// else, rather than off for never having been in the file.
+		// What is written down is what was turned ON, so a format or a product that turns up later
+		// arrives unticked (EMU-248).
 		void loadSelection();
 		void saveSelection() const;
 		void applySelection(PluginEntryController& _entry) const;
@@ -167,11 +185,6 @@ namespace pluginManager
 
 		// The chips read the rows, so anything that moves every row at once has to refresh them.
 		void updateFormatChips() const;
-
-		// What every row says is installed, read from the disk again. Cheap - it is the manifest and
-		// a look at whether the files are still there - and not a catalog refresh, which goes to the
-		// network and is not what changed.
-		void refreshInstalled();
 
 		// The status line under the header: how much is on offer, and why that is not everything.
 		std::string summary(size_t _shown) const;
@@ -229,6 +242,7 @@ namespace pluginManager
 		std::unique_ptr<DetailPage> m_detail;
 		std::unique_ptr<ChangelogPage> m_changelog;
 		std::unique_ptr<PreferencesPage> m_preferences;
+		std::unique_ptr<OfflinePage> m_offline;
 		std::unique_ptr<juceRmlUi::Tooltips> m_tooltips;
 		Rml::Element* m_pluginList = nullptr;
 		Rml::Element* m_formatToggles = nullptr;

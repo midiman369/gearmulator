@@ -138,6 +138,8 @@ namespace emu88Player
 				});
 		}
 		for(const auto& binding : g_sc8850Buttons) wireButton(binding);
+		for(const auto& binding : g_sc880Buttons) wireButton(binding);
+		for(const auto& binding : g_proeButtons) wireButton(binding);
 		// The MV-30's faces hold their switch while the button is down, past the 32 the other panels have
 		for(const auto& binding : g_mv30Buttons)
 		{
@@ -168,9 +170,14 @@ namespace emu88Player
 					updateButtonVisuals();
 				});
 		}
-		if(auto* value = document->GetElementById("bt8850Value"))
+		// The SC-8850's VALUE encoder and the SC-880's VALUE dial, each with its push switch.
+		for(const auto& [id, push] : {std::pair{"bt8850Value", static_cast<uint32_t>(emu88Lib::Sc8850Button::ValuePush)},
+		                              std::pair{"bt880Value", static_cast<uint32_t>(emu88Lib::Sc880Button::DialPush)}})
 		{
-			// Push + turn is the firmware's coarse mode: with ENCSW held every
+			auto* value = document->GetElementById(id);
+			if(!value)
+				continue;
+			// Push + turn is the SC-8850 firmware's coarse mode: with ENCSW held every
 			// detent steps the value by ten (four detents moved the instrument
 			// from 001 to 041 on the board). So a drag must turn the encoder
 			// without pushing it. Only a click that did not move pushes, as a
@@ -182,7 +189,7 @@ namespace emu88Player
 				m_valueKnobDownX = position.x;
 				m_valueKnobDownY = position.y;
 			});
-			juceRmlUi::EventListener::Add(value, Rml::EventId::Mouseup, [this](Rml::Event& _event)
+			juceRmlUi::EventListener::Add(value, Rml::EventId::Mouseup, [this, valuePush = push](Rml::Event& _event)
 			{
 				if(juceRmlUi::helper::isContextMenu(_event))
 					return;
@@ -191,10 +198,9 @@ namespace emu88Player
 				const auto dy = position.y - m_valueKnobDownY;
 				if(dx * dx + dy * dy > kValuePushClickRadius * kValuePushClickRadius)
 					return;
-				constexpr auto valuePush = static_cast<uint32_t>(emu88Lib::Sc8850Button::ValuePush);
 				const juce::WeakReference<Editor> safeThis(this);
 				// Outside the event, so the button visuals change under the access lock themselves.
-				juce::Timer::callAfterDelay(1, [safeThis]
+				juce::Timer::callAfterDelay(1, [safeThis, valuePush]
 				{
 					if(auto* editor = safeThis.get())
 					{
@@ -202,7 +208,7 @@ namespace emu88Player
 						editor->setPointerButton(valuePush, true);
 					}
 				});
-				juce::Timer::callAfterDelay(1 + kValuePushPulseMs, [safeThis]
+				juce::Timer::callAfterDelay(1 + kValuePushPulseMs, [safeThis, valuePush]
 				{
 					if(auto* editor = safeThis.get())
 					{
@@ -273,12 +279,23 @@ namespace emu88Player
 				_event.StopPropagation();
 				return;
 			}
+			if(model == emu88Lib::DeviceModel::ProE && (key == g_proeDialUpKey || key == g_proeDialDownKey))
+			{
+				if(auto* hardware = m_processor.hardware())
+					hardware->turnPanelEncoder(key == g_proeDialUpKey ? 1 : -1);
+				_event.StopPropagation();
+				return;
+			}
 			if(model == emu88Lib::DeviceModel::Sc8850)
 				handleKey(g_sc8850Buttons);
 			else if(usesLaBoardButtons(model))
 				handleKey(g_mt32Buttons);
 			else if(model == emu88Lib::DeviceModel::Sk88Pro)
 				handleKey(g_sk88Buttons);
+			else if(model == emu88Lib::DeviceModel::Sc880)
+				handleKey(g_sc880Buttons);
+			else if(model == emu88Lib::DeviceModel::ProE)
+				handleKey(g_proeButtons);
 			else
 				handleKey(g_sc88Buttons);
 		});
@@ -318,6 +335,10 @@ namespace emu88Player
 				handleKey(g_mt32Buttons);
 			else if(model == emu88Lib::DeviceModel::Sk88Pro)
 				handleKey(g_sk88Buttons);
+			else if(model == emu88Lib::DeviceModel::Sc880)
+				handleKey(g_sc880Buttons);
+			else if(model == emu88Lib::DeviceModel::ProE)
+				handleKey(g_proeButtons);
 			else
 				handleKey(g_sc88Buttons);
 		});
@@ -343,8 +364,12 @@ namespace emu88Player
 				m_processor.setOutputGain(value / static_cast<float>(g_volumeUnity));
 			});
 		}
-		if(auto* value = document->GetElementById("bt8850Value"))
+		// The SC-8850's and SC-880's VALUE encoders and the PRO-E's TEMPO / VALUE dial.
+		for(const auto* id : {"bt8850Value", "bt880Value", "btProEDial"})
 		{
+			auto* value = document->GetElementById(id);
+			if(!value)
+				continue;
 			// The endless knob wraps by (max - min), so value 32 is the same
 			// detent as value 0: 32 detents per turn, one knurl sprite per detent.
 			constexpr int encoderMinimum = 0;
@@ -501,6 +526,10 @@ namespace emu88Player
 			for(const auto& binding : g_sc8850Buttons) add(binding);
 		else if(usesLaBoardButtons(_model))
 			for(const auto& binding : g_mt32Buttons) add(binding);
+		else if(_model == emu88Lib::DeviceModel::Sc880)
+			for(const auto& binding : g_sc880Buttons) add(binding);
+		else if(_model == emu88Lib::DeviceModel::ProE)
+			for(const auto& binding : g_proeButtons) add(binding);
 		else if(_model == emu88Lib::DeviceModel::Sk88Pro)
 		{
 			// The SC-88Pro faces the SK-88Pro has no switch for stay on the artwork, disabled.
@@ -549,6 +578,11 @@ namespace emu88Player
 			// emu88Lib::Sc8850::Led bit order.
 			assign({"bt8850Edit", "bt8850Drum", "bt8850Effects", "bt8850Shift", "bt8850Solo", "bt8850Mute"});
 			break;
+		case emu88Lib::DeviceModel::Sc880:
+			// emu88Lib::Sc880Led bit order.
+			assign({"bt880Utility", "bt880System", "bt880Edit", "bt880Mfx", "bt880Perf", "bt880Patch", "bt880Tone",
+			        "bt880Rhythm", "bt880Write", "bt880Info"});
+			break;
 		case emu88Lib::DeviceModel::Sc55Mk2:
 		case emu88Lib::DeviceModel::Sc55Mk1:
 		case emu88Lib::DeviceModel::Sc55St:
@@ -569,6 +603,12 @@ namespace emu88Player
 		case emu88Lib::DeviceModel::Mt32New:
 			// The bezel's only driven lamp, bit 0 of the board's leds(); POWER is painted on.
 			assign({"ledCmMidi"});
+			break;
+		case emu88Lib::DeviceModel::ProE:
+			// emu88Lib::ProELed bit order: the lamps of the arranger switches, then the four beat lamps.
+			assign({"btProEStartStop", "btProEIntroEnd", "btProESyncStart", "btProESyncStop", "btProEArrHold",
+			        "btProEAdvArr", "btProEVariation", "btProEFadeIn", "btProEFadeOut", "btProEStyle", "btProEGroup",
+			        "ledProEBeat1", "ledProEBeat2", "ledProEBeat3", "ledProEBeat4"});
 			break;
 		default:
 			// Gate-array LED port bit order, shared by SC-88, SC-88VL and SC-88Pro.
@@ -651,14 +691,40 @@ namespace emu88Player
 		return groups;
 	}
 
+	KeyboardShortcutGroups Editor::buildProEKeyboardGroups()
+	{
+		const auto rows = [](const std::initializer_list<ProEButton> _buttons)
+		{
+			std::vector<KeyboardShortcut> result;
+			for(const auto button : _buttons)
+				for(const auto& binding : g_proeButtons)
+					if(binding.button == static_cast<uint8_t>(button))
+						result.push_back({keyName(binding.key), binding.label});
+			return result;
+		};
+		KeyboardShortcutGroups groups{{"Power", {{"Q", "Power on / off"}}}};
+		groups.push_back({"Arranger", rows({ProEButton::StartStop, ProEButton::IntroEnd, ProEButton::FillOriginal,
+		                                    ProEButton::FillVariation, ProEButton::SyncStart, ProEButton::SyncStop,
+		                                    ProEButton::Variation, ProEButton::ArrangerHold,
+		                                    ProEButton::AdvancedArranger, ProEButton::TapTempo, ProEButton::FadeIn,
+		                                    ProEButton::FadeOut})});
+		groups.push_back({"Style", {{"F1 - F8", "BANK 1 - 8"}, {"1 - 8", "NUMBER 1 - 8"}}});
+		for(auto& row : rows({ProEButton::Style, ProEButton::GroupAB}))
+			groups.back().rows.push_back(std::move(row));
+		groups.push_back({"Dial", {{keyName(g_proeDialUpKey) + " / " + keyName(g_proeDialDownKey),
+		                            "TEMPO / VALUE dial, a detent"}}});
+		return groups;
+	}
+
 	KeyboardShortcutGroups Editor::buildKeyboardGroups()
 	{
 		const auto model = m_processor.deviceModel();
 		const auto is8850 = model == emu88Lib::DeviceModel::Sc8850;
 		const auto isLa = usesLaBoardButtons(model);
 		const auto isSk = model == emu88Lib::DeviceModel::Sk88Pro;
+		const auto is880 = model == emu88Lib::DeviceModel::Sc880;
 
-		const auto keyFor = [is8850, isLa, isSk](const uint8_t _button) -> std::string
+		const auto keyFor = [is8850, isLa, isSk, is880](const uint8_t _button) -> std::string
 		{
 			const auto find = [_button](const auto& _table) -> std::string
 			{
@@ -668,7 +734,7 @@ namespace emu88Player
 				return {};
 			};
 			return is8850 ? find(g_sc8850Buttons) : isLa ? find(g_mt32Buttons)
-			     : isSk ? find(g_sk88Buttons) : find(g_sc88Buttons);
+			     : isSk ? find(g_sk88Buttons) : is880 ? find(g_sc880Buttons) : find(g_sc88Buttons);
 		};
 		const auto populated = [model, is8850](const uint8_t _button)
 		{
@@ -678,6 +744,8 @@ namespace emu88Player
 
 		if(model == emu88Lib::DeviceModel::Mv30)
 			return buildMv30KeyboardGroups();
+		if(model == emu88Lib::DeviceModel::ProE)
+			return buildProEKeyboardGroups();
 
 		KeyboardShortcutGroups groups{{"Power", {{"Q", "Power on / off"}}}};
 		if(emu88Lib::getPowerSwitch(model) == emu88Lib::PowerSwitch::Standby)
@@ -732,6 +800,8 @@ namespace emu88Player
 			walk(g_mt32Help);
 		else if(isSk)
 			walk(g_sk88Help);
+		else if(is880)
+			walk(g_sc880Help);
 		else
 			walk(g_sc88Help);
 

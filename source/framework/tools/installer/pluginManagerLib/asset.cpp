@@ -163,6 +163,31 @@ namespace pluginManager
 		return 0;
 	}
 
+	bool includesBuild(const bool _offered, const bool _wanted, const bool _installed)
+	{
+		return _offered && (_wanted || _installed);
+	}
+
+	std::optional<InstallAction> columnAction(const bool _withPlugin, const InstallAction _plugin,
+	                                          const bool _withFx, const InstallAction _fx)
+	{
+		if (_withPlugin && _withFx)
+			return combineInstallActions(_plugin, _fx);
+
+		if (_withPlugin)
+			return _plugin;
+
+		if (_withFx)
+			return _fx;
+
+		return {};
+	}
+
+	bool fetchesPart(const InstallAction _part, const InstallAction _column)
+	{
+		return _column == InstallAction::Reinstall || _part != InstallAction::Reinstall;
+	}
+
 	InstallAction combineInstallActions(const InstallAction _plugin, const InstallAction _fx)
 	{
 		for (const auto action : {InstallAction::Install, InstallAction::Upgrade, InstallAction::Downgrade})

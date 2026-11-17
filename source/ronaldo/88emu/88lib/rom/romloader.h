@@ -143,7 +143,8 @@ namespace emu88Lib
 
         // The SC-88Pro board's set. The VE-GS Pro is the same board with its own
         // control ROM and the same waves, so _device picks whose control ROM is read.
-        // For the SK-88Pro the firmware is the image buildSk88ProImage() makes.
+        // For the SK-88Pro the firmware is the image buildSk88ProImage() makes; the SC-880
+        // runs its own control ROM on the same waves.
         static Sc88ProRomSet findSc88ProRomSet(RomDevice _device = RomDevice::Sc88Pro);
 
         // SC-8850 uses the SH7016's 64 KiB internal ROM, a 1 MiB CS0
@@ -157,6 +158,8 @@ namespace emu88Lib
         static Cm32pRomSet findCm32pRomSet();
         // The MV-30: boot ROM, wave ROMs A-F, the LCD's character ROM and the system disk.
         static Mv30RomSet findMv30RomSet();
+        // The PRO-E's program and pattern ROMs; its CM-32L stand-in comes from findLaRomSet().
+        static ProERomSet findProERomSet();
 
         // One of the LA boards: control ROM, the LA32's PCM image and the Boss reverb
         // microcode, at the sizes that board takes.

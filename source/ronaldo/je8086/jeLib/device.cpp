@@ -8,7 +8,7 @@
 #include "baseLib/filesystem.h"
 #include "dsp56kBase/logging.h"
 
-#include "common/boardThread.h"
+#include "synthLib/boardThread.h"
 
 #include <algorithm>
 #include <cmath>
@@ -57,7 +57,7 @@ namespace jeLib
 
 		m_je8086.reset(new Je8086(_params.romData, ram));
 
-		m_thread.reset(new rLib::BoardThread<Je8086>(*m_je8086, "JE8086"));
+		m_thread.reset(new synthLib::BoardThread<Je8086>(*m_je8086, "JE8086"));
 
 		m_paramChangedListener.set(m_frontPanel.evParam, [this](const uint8_t _page, const uint8_t _index, const int32_t& _value)
 		{
@@ -98,6 +98,8 @@ namespace jeLib
 
 		for (const auto& result : results)
 			_state.insert(_state.end(), result.sysex.begin(), result.sysex.end());
+
+		_state.insert(_state.end(), m_otherModelSystemDump.begin(), m_otherModelSystemDump.end());
 		return true;
 	}
 
@@ -115,9 +117,19 @@ namespace jeLib
 
 		m_masterVolume = -1.0f;
 		m_inputLevel = {-1, -1};
+		m_otherModelSystemDump.clear();
 
 		for (auto& message : messages)
 		{
+			// A ROM switch hands over the system block of the other model, whose bytes mean something else here: byte 9
+			// is unused on the JP-8080 and holds OFF, which is the JP-8000's Remote Ctrl CH (BUG-10512). This model keeps
+			// its own settings, the other one gets its block back when the ROM is switched back
+			if (State::isSystemDump(message, !m_je8086->isRack()))
+			{
+				m_otherModelSystemDump = std::move(message);
+				continue;
+			}
+
 			// up to 2.2.26 the master volume was F0 7D 05 <page:2> <index:2> <value:8> F7, the front panel Param frame
 			// has the same payload
 			if (message.size() == 16 && message[0] == 0xf0 && message[1] == 0x7d && message[2] == 0x05)
@@ -227,6 +239,10 @@ namespace jeLib
 
 	bool Device::sendMidi(const synthLib::SMidiEvent& _ev, std::vector<synthLib::SMidiEvent>& _response)
 	{
+		// the firmware answers an RQ1 a while later
+		if (auto matcher = State::createReplyMatcher(_ev.sysex))
+			expectReply(_ev.source, std::move(matcher));
+
 		// the master volume is applied here, everything goes to the board too: it consumes the panel frames on the
 		// emulation thread, see Je8086::addMidiEvent
 		m_frontPanel.receive(_ev.sysex);

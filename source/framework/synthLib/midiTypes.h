@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cassert>
+#include <functional>
+#include <utility>
 #include <vector>
 #include <cstdint>
 
@@ -287,6 +289,9 @@ namespace synthLib
 		SysexBuffer sysex;
 		uint32_t offset;
 		MidiEventSource source;
+		// A device's reply to a request carries the source of the request: the reply goes back there and to the editor
+		// only, see MidiRoutingMatrix::enabled() and markReplies(). Unknown for anything that is not a reply
+		MidiEventSource replyTo = MidiEventSource::Unknown;
 		MidiEventType type = MidiEventType::Midi;
 		uint32_t transportGeneration = 0;
 		// File-player SysEx may be discarded before transmission on a song change.
@@ -295,6 +300,9 @@ namespace synthLib
 		// Physical / virtual MIDI port the event belongs to (devices with several
 		// MIDI inputs or outputs, e.g. the SC-88 family's IN A/B and USB cables).
 		uint8_t port = 0;
+		// Samples after offset at which the event is to sound. It reaches the device that much early, for a device that
+		// plays what it gets at its time, see ArpSettings::lead. 0 for everything else
+		uint16_t lead = 0;
 		HostTransport transport;	// MidiEventType::HostTransport only
 		SMidiEvent(const MidiEventSource _source = MidiEventSource::Unknown, const uint8_t _a = 0, const uint8_t _b = 0, const uint8_t _c = 0, const uint32_t _offset = 0)
 			: a(_a), b(_b), c(_c), offset(_offset), source(_source)
@@ -302,17 +310,17 @@ namespace synthLib
 		}
 
 		SMidiEvent(const SMidiEvent& _e)
-			: a(_e.a), b(_e.b), c(_e.c), sysex(_e.sysex), offset(_e.offset), source(_e.source), type(_e.type)
+			: a(_e.a), b(_e.b), c(_e.c), sysex(_e.sysex), offset(_e.offset), source(_e.source), replyTo(_e.replyTo), type(_e.type)
 			, transportGeneration(_e.transportGeneration), cancelOnTransportChange(_e.cancelOnTransportChange), port(_e.port)
-			, transport(_e.transport)
+			, lead(_e.lead), transport(_e.transport)
 		{
 			assert(empty() || source != MidiEventSource::Unknown);
 		}
 
 		SMidiEvent(SMidiEvent&& _e) noexcept
-			: a(_e.a), b(_e.b), c(_e.c), sysex(std::move(_e.sysex)), offset(_e.offset), source(_e.source), type(_e.type)
+			: a(_e.a), b(_e.b), c(_e.c), sysex(std::move(_e.sysex)), offset(_e.offset), source(_e.source), replyTo(_e.replyTo), type(_e.type)
 			, transportGeneration(_e.transportGeneration), cancelOnTransportChange(_e.cancelOnTransportChange), port(_e.port)
-			, transport(_e.transport)
+			, lead(_e.lead), transport(_e.transport)
 		{
 			assert(empty() || source != MidiEventSource::Unknown);
 		}
@@ -327,10 +335,12 @@ namespace synthLib
 			sysex = _e.sysex;
 			offset = _e.offset;
 			source = _e.source;
+			replyTo = _e.replyTo;
 			type = _e.type;
 			transportGeneration = _e.transportGeneration;
 			cancelOnTransportChange = _e.cancelOnTransportChange;
 			port = _e.port;
+			lead = _e.lead;
 			transport = _e.transport;
 			assert(empty() || source != MidiEventSource::Unknown);
 			return *this;
@@ -344,10 +354,12 @@ namespace synthLib
 			sysex = std::move(_e.sysex);
 			offset = _e.offset;
 			source = _e.source;
+			replyTo = _e.replyTo;
 			type = _e.type;
 			transportGeneration = _e.transportGeneration;
 			cancelOnTransportChange = _e.cancelOnTransportChange;
 			port = _e.port;
+			lead = _e.lead;
 			transport = _e.transport;
 			assert(empty() || source != MidiEventSource::Unknown);
 			return *this;
@@ -376,5 +388,41 @@ namespace synthLib
 		_event.a = _data[0];
 		_event.b = _size > 1 ? _data[1] : 0;
 		_event.c = _size > 2 ? _data[2] : 0;
+	}
+
+	// Marks the events from _first on as a device's reply to a request from _requester, see SMidiEvent::replyTo
+	inline void markReplies(std::vector<SMidiEvent>& _events, const size_t _first, const MidiEventSource _requester)
+	{
+		for (auto i = _first; i < _events.size(); ++i)
+			_events[i].replyTo = _requester;
+	}
+
+	// What a message is to a request: not its answer, a part of the answer with more to come, or all or the rest of it
+	enum class ReplyMatch : uint8_t
+	{
+		None,
+		Partial,
+		Complete
+	};
+
+	using ReplyMatcher = std::function<ReplyMatch(const SMidiEvent&)>;
+
+	// Answered by a SysEx that has these values at these positions: a dump known by its header
+	inline ReplyMatcher expectBytes(std::vector<std::pair<uint32_t, uint8_t>> _bytes)
+	{
+		return [bytes = std::move(_bytes)](const SMidiEvent& _ev)
+		{
+			const auto& s = _ev.sysex;
+
+			if (s.empty())
+				return ReplyMatch::None;
+
+			for (const auto& [index, value] : bytes)
+			{
+				if (index >= s.size() || s[index] != value)
+					return ReplyMatch::None;
+			}
+			return ReplyMatch::Complete;
+		};
 	}
 }

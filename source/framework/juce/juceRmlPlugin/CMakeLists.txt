@@ -4,8 +4,10 @@ project(juceRmlPlugin VERSION ${CMAKE_PROJECT_VERSION})
 set(SOURCES
 	rmlControllerLink.cpp rmlControllerLink.h
 	rmlLuaAudio.cpp rmlLuaAudio.h
+	rmlLuaLeds.cpp rmlLuaLeds.h
 	rmlLuaMidi.cpp rmlLuaMidi.h
 	rmlLuaParameters.cpp rmlLuaParameters.h
+	rmlLuaRom.cpp rmlLuaRom.h
 	rmlLuaSkinVariables.cpp rmlLuaSkinVariables.h
 	rmlPlugin.cpp rmlPlugin.h
 	rmlPluginContext.cpp rmlPluginContext.h

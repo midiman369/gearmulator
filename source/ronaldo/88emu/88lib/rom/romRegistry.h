@@ -65,6 +65,10 @@ namespace emu88Lib
         // (Program) and an undumped parameter mask ROM, whose contents the SC-88Pro control
         // ROM carries at the same addresses (Control). Wave ROMs are the SC-88Pro's.
         Sk88Pro,
+        // The SC-880: the SC-88Pro board with its own 2 MiB control ROM.
+        Sc880,
+        // The PRO-E arranger: an HC11 program ROM and four pattern ROMs (Data 0-3).
+        ProE,
 
         Count
     };
@@ -145,6 +149,8 @@ namespace emu88Lib
         {RomDevice::VeGsPro, RomSlot::Wave, 1, 5, 0x800000, 0x400000, false},
         {RomDevice::Sk88Pro, RomSlot::Wave, 0, 3, 0x800000, 0x400000, false},
         {RomDevice::Sk88Pro, RomSlot::Wave, 1, 5, 0x800000, 0x400000, false},
+        {RomDevice::Sc880, RomSlot::Wave, 0, 3, 0x800000, 0x400000, false},
+        {RomDevice::Sc880, RomSlot::Wave, 1, 5, 0x800000, 0x400000, false},
     };
 
     // The composite this index is the whole image of, if any.
@@ -249,6 +255,11 @@ namespace emu88Lib
         {RomDevice::Mv30, RomSlot::Wave, 5, 0x80000, "mv30_wave_f.bin", false},
         {RomDevice::Mv30, RomSlot::Font, 0, 0x400, "mv30_lcd_font.bin", false},
         {RomDevice::Mv30, RomSlot::Disk, 0, 0xb4000, "mv30_system.img", false},
+        {RomDevice::ProE, RomSlot::Program, 0, 0x4000, "proe_ic4.bin", false},
+        {RomDevice::ProE, RomSlot::Data, 0, 0x10000, "proe_ic6.bin", false},
+        {RomDevice::ProE, RomSlot::Data, 1, 0x10000, "proe_ic7.bin", false},
+        {RomDevice::ProE, RomSlot::Data, 2, 0x10000, "proe_ic17.bin", false},
+        {RomDevice::ProE, RomSlot::Data, 3, 0x10000, "proe_ic18.bin", false},
         {RomDevice::Sc8820, RomSlot::Internal, 0, 0x10000, "sc8820_internal.bin", false},
         {RomDevice::Sc8820, RomSlot::Program, 0, 0x200000, "sc8820_program.bin", false},
         {RomDevice::Sc8820, RomSlot::Wave, 0, 0x1000000, "sc8820_wave0.bin", false},
@@ -283,6 +294,15 @@ namespace emu88Lib
         {RomDevice::Sk88Pro, RomSlot::Wave, 4, 0x400000, "sc88pro_wave_cs1.bin", false},
         {RomDevice::Sk88Pro, RomSlot::Wave, 5, 0x400000, "sc88pro_wave_cs2.bin", false},
         {RomDevice::Sk88Pro, RomSlot::Wave, 6, 0x400000, "sc88pro_wave_cs3.bin", false},
+        // The SC-880 takes the SC-88Pro's wave images under their names.
+        {RomDevice::Sc880, RomSlot::Control, 0, 0x200000, "sc880_control.bin", true},
+        {RomDevice::Sc880, RomSlot::Wave, 0, 0x800000, "sc88pro_wave0.bin", false},
+        {RomDevice::Sc880, RomSlot::Wave, 1, 0x800000, "sc88pro_wave1.bin", false},
+        {RomDevice::Sc880, RomSlot::Wave, 2, 0x400000, "sc88pro_wave2.bin", false},
+        {RomDevice::Sc880, RomSlot::Wave, 3, 0x400000, "sc88pro_wave_cs0.bin", false},
+        {RomDevice::Sc880, RomSlot::Wave, 4, 0x400000, "sc88pro_wave_cs1.bin", false},
+        {RomDevice::Sc880, RomSlot::Wave, 5, 0x400000, "sc88pro_wave_cs2.bin", false},
+        {RomDevice::Sc880, RomSlot::Wave, 6, 0x400000, "sc88pro_wave_cs3.bin", false},
         {RomDevice::Sc8850, RomSlot::Internal, 0, 0x10000, "sc8850_internal.bin", false},
         {RomDevice::Sc8850, RomSlot::Program, 0, 0x100000, "sc8850_program.bin", false},
         {RomDevice::Sc8850, RomSlot::Data, 0, 0x200000, "sc8850_data.bin", false},
@@ -411,8 +431,8 @@ namespace emu88Lib
          "1.02", false},
         {romDevices(RomDevice::Cm32l), RomSlot::Control, 0, 0x10000, baseLib::MD5("099552dcbc6a94bb0d2abf1281873fa1"),
          "1.00, LAPC-I", false},
-        {romDevices(RomDevice::Cm32ln), RomSlot::Control, 0, 0x10000, {}, "1.00, CM-32LN/CM-500/LAPC-N", false, false,
-         false, baseLib::SHA1("dc1c5b1b90a4646d00f7daf3679733c7badc7077")},
+        {romDevices(RomDevice::Cm32ln), RomSlot::Control, 0, 0x10000, baseLib::MD5("88f459121acf32923b1d85742c67e9c9"),
+         "1.00, CM-32LN/CM-500/LAPC-N", false},
         {romDevices(RomDevice::Cm32l, RomDevice::Cm32ln), RomSlot::Wave, 0, 0x100000,
          baseLib::MD5("08cdcfa0ed93e9cb16afa76e6ac5f0a4"), "R15449121+R15179945", false},
         {romDevices(RomDevice::Cm32l, RomDevice::Cm32ln, RomDevice::Mt32New), RomSlot::Reverb, 0, 0x8000,
@@ -496,17 +516,16 @@ namespace emu88Lib
         // -----------------------------------------------------------------
         // A P8098 on an 8-bit bus, the firmware in a single banked 128 KiB mask ROM whose upper
         // half holds the ROM Play demo songs, and the reverb microcode R15179917 it shares with
-        // the CM-32L. Only 2.04 has been hashed here; the other three are catalogued from
-        // munt's published digests. 2.03 is the MT-100's firmware; that machine is an MT-32
-        // with a sequencer and a Quick Disk drive on the same main board.
-        {romDevices(RomDevice::Mt32New), RomSlot::Control, 0, 0x20000, {}, "2.07", false, false, false,
-         baseLib::SHA1("47b52adefedaec475c925e54340e37673c11707c")},
-        {romDevices(RomDevice::Mt32New), RomSlot::Control, 0, 0x20000, {}, "2.06", false, false, false,
-         baseLib::SHA1("2869cf4c235d671668cfcb62415e2ce8323ad4ed")},
+        // the CM-32L. 2.03 is the MT-100's firmware; that machine is an MT-32 with a sequencer
+        // and a Quick Disk drive on the same main board.
+        {romDevices(RomDevice::Mt32New), RomSlot::Control, 0, 0x20000, baseLib::MD5("8c4b2c7708be8e88a3ac14777575629c"),
+         "2.07", false},
+        {romDevices(RomDevice::Mt32New), RomSlot::Control, 0, 0x20000, baseLib::MD5("daa3ea8e557b85e1ae25a1348db37343"),
+         "2.06", false},
         {romDevices(RomDevice::Mt32New), RomSlot::Control, 0, 0x20000, baseLib::MD5("615a866337ecb752768ac03ed4ddf85c"),
          "2.04, 88-11-11", false},
-        {romDevices(RomDevice::Mt32New), RomSlot::Control, 0, 0x20000, {}, "2.03, MT-100", false, false, false,
-         baseLib::SHA1("5837064c9df4741a55f7c4d8787ac158dff2d3ce")},
+        {romDevices(RomDevice::Mt32New), RomSlot::Control, 0, 0x20000, baseLib::MD5("ef4978c0a278f284d12b1632aa0b804b"),
+         "2.03, MT-100", false},
 
         {romDevices(RomDevice::Cm32p), RomSlot::Program, 0, 0x10000, baseLib::MD5("ccd61a220f433a62a53b48eb9bb36827"),
          "1.00", false},
@@ -538,6 +557,22 @@ namespace emu88Lib
          "1.091", false},
         {romDevices(RomDevice::Mv30), RomSlot::Disk, 0, 0xb4000, baseLib::MD5("bea309a1fefa5ca4a43a3bf9417516db"),
          "1.08", false},
+
+        // -----------------------------------------------------------------
+        // PRO-E
+        // -----------------------------------------------------------------
+        // The program ROM says "ver 01.00 041389" on its test screen. The pattern ROMs hold
+        // code as well as the styles: the program calls into the banked window.
+        {romDevices(RomDevice::ProE), RomSlot::Program, 0, 0x4000, baseLib::MD5("359d35b9238cf7492218a681fd3003e0"),
+         "1.00", false},
+        {romDevices(RomDevice::ProE), RomSlot::Data, 0, 0x10000, baseLib::MD5("ddf9ba6a5690558107e81f10b2e5dc0d"),
+         "IC6", false},
+        {romDevices(RomDevice::ProE), RomSlot::Data, 1, 0x10000, baseLib::MD5("5fded9504cfd4142f6bfa8a3c194902a"),
+         "IC7", false},
+        {romDevices(RomDevice::ProE), RomSlot::Data, 2, 0x10000, baseLib::MD5("c5caa57249fcbc56f65c18a15373a0fa"),
+         "IC17", false},
+        {romDevices(RomDevice::ProE), RomSlot::Data, 3, 0x10000, baseLib::MD5("035f6449672d4c9e82a890adfe03d1af"),
+         "IC18", false},
 
         // -----------------------------------------------------------------
         // SC-88 / SC-88VL
@@ -584,26 +619,33 @@ namespace emu88Lib
          baseLib::MD5("9d4c2f123b4451d8ee75c3b982760f28"), "1.02", true},
         {romDevices(RomDevice::Sc88Pro), RomSlot::Control, 0, 0x100000,
          baseLib::MD5("784b3ea762b5f96cabdceb33d121d5e4"), "SC-GS A '96", true},
-        {romDevices(RomDevice::Sc88Pro, RomDevice::VeGsPro, RomDevice::Sk88Pro), RomSlot::Wave, 0, 0x800000,
+        {romDevices(RomDevice::Sc88Pro, RomDevice::VeGsPro, RomDevice::Sk88Pro, RomDevice::Sc880),
+         RomSlot::Wave, 0, 0x800000,
          baseLib::MD5("bd33b20bb5e8f51e436e141f81a75c14"), "R01567167, XP-GS 1.01", false},
-        {romDevices(RomDevice::Sc88Pro, RomDevice::VeGsPro, RomDevice::Sk88Pro), RomSlot::Wave, 1, 0x800000,
+        {romDevices(RomDevice::Sc88Pro, RomDevice::VeGsPro, RomDevice::Sk88Pro, RomDevice::Sc880),
+         RomSlot::Wave, 1, 0x800000,
          baseLib::MD5("125ea2056dc208f04a141b3dcdffdb1b"), "R01567178, SC-GS 1.00", false},
-        {romDevices(RomDevice::Sc88Pro, RomDevice::VeGsPro, RomDevice::Sk88Pro), RomSlot::Wave, 2, 0x400000,
+        {romDevices(RomDevice::Sc88Pro, RomDevice::VeGsPro, RomDevice::Sk88Pro, RomDevice::Sc880),
+         RomSlot::Wave, 2, 0x400000,
          baseLib::MD5("48c3887c9a2a574b907242640fa0a320"), "R01233667, SC-GS 1.00", false},
 
         // The same PCM as the five 4 MiB mask ROMs the SC-88Pro board carries instead, one
         // per XP chip select. CS4 is R01233667 unchanged, so the row above already is it;
         // these four are the halves of the two larger parts, in chip-select order.
-        {romDevices(RomDevice::Sc88Pro, RomDevice::VeGsPro, RomDevice::Sk88Pro), RomSlot::Wave, 3, 0x400000,
+        {romDevices(RomDevice::Sc88Pro, RomDevice::VeGsPro, RomDevice::Sk88Pro, RomDevice::Sc880),
+         RomSlot::Wave, 3, 0x400000,
          baseLib::MD5("decc8a499b69e68ee8b121d73410c36b"), "CS0, first half of R01567167, derived reference",
          false},
-        {romDevices(RomDevice::Sc88Pro, RomDevice::VeGsPro, RomDevice::Sk88Pro), RomSlot::Wave, 4, 0x400000,
+        {romDevices(RomDevice::Sc88Pro, RomDevice::VeGsPro, RomDevice::Sk88Pro, RomDevice::Sc880),
+         RomSlot::Wave, 4, 0x400000,
          baseLib::MD5("69933f0a2a3f6f4ab53932f40ba63f74"), "CS1, second half of R01567167, derived reference",
          false},
-        {romDevices(RomDevice::Sc88Pro, RomDevice::VeGsPro, RomDevice::Sk88Pro), RomSlot::Wave, 5, 0x400000,
+        {romDevices(RomDevice::Sc88Pro, RomDevice::VeGsPro, RomDevice::Sk88Pro, RomDevice::Sc880),
+         RomSlot::Wave, 5, 0x400000,
          baseLib::MD5("bda725bd1cf8c3911f906314ca162bed"), "CS2, first half of R01567178, derived reference",
          false},
-        {romDevices(RomDevice::Sc88Pro, RomDevice::VeGsPro, RomDevice::Sk88Pro), RomSlot::Wave, 6, 0x400000,
+        {romDevices(RomDevice::Sc88Pro, RomDevice::VeGsPro, RomDevice::Sk88Pro, RomDevice::Sc880),
+         RomSlot::Wave, 6, 0x400000,
          baseLib::MD5("94e94038993600555b738e8ccc24d8b8"), "CS3, second half of R01567178, derived reference",
          false},
 
@@ -629,6 +671,17 @@ namespace emu88Lib
         // as on the SC-88Pro). Dumped word-swapped; the hash is CPU order.
         {romDevices(RomDevice::Sk88Pro), RomSlot::Program, 0, 0x80000,
          baseLib::MD5("b55b02cfcd6b971cc8c4ee10bce50019"), "1.01", true},
+
+        // -----------------------------------------------------------------
+        // SC-880
+        // -----------------------------------------------------------------
+        // Ver 1.04 of 1998-02-17 (the test mode's first page; "GS-64 VER=3.00" is its
+        // GS version), read off the board's bus with the CPU removed. The
+        // rig's A8-A15 header had each adjacent pair of lines crossed; the hash
+        // is the image with those put back (the SC-88Pro's tone data at
+        // 020000-0FFFFF then lines up byte for byte). CPU order.
+        {romDevices(RomDevice::Sc880), RomSlot::Control, 0, 0x200000,
+         baseLib::MD5("052707d6a9ec7c4f03d60d1f10464bf0"), "1.04", true},
 
         // -----------------------------------------------------------------
         // SC-8850
@@ -713,26 +766,25 @@ namespace emu88Lib
         // three separate 1 MiB PCM mask ROMs. Five firmware revisions circulate, and
         // each one's H8/532 on-chip ROM belongs with its program ROM: the loader pairs
         // them by the revision number. 1.21 is the one hashed here and the preferred
-        // one; 1.20 shares its on-chip ROM, and 2.00 runs on the SC-155's. The others
-        // are catalogued from the SHA-256 digests.
+        // one; 1.20 shares its on-chip ROM, and 2.00 runs on the SC-155's.
         {romDevices(RomDevice::Sc55Mk1), RomSlot::Internal, 0, 0x8000, baseLib::MD5("462cb3a2ce9e54f4e54a52f643931ffd"),
          "1.20/1.21, R15199778", false, false, false, {}, {}, 1},
         {romDevices(RomDevice::Sc55Mk1), RomSlot::Program, 0, 0x40000, baseLib::MD5("6b61186953b50d900e430ae6a996bda7"),
          "1.21, R15209363", false, false, false, {}, {}, 1},
-        {romDevices(RomDevice::Sc55Mk1), RomSlot::Program, 0, 0x40000, {}, "1.20, R15209337", false, false, false, {},
-         baseLib::SHA256("22ce6ca59e6332143b335525e81fab501ea6fccce4b7e2f3bfc2cc8bf6612ff6"), 1},
-        {romDevices(RomDevice::Sc55Mk1), RomSlot::Internal, 0, 0x8000, {}, "2.00, R15199799", false, false, false, {},
-         baseLib::SHA256("24a65c97cdbaa847d6f59193523ce63c73394b4b693a6517ee79441f2fb8a3ee"), 2},
-        {romDevices(RomDevice::Sc55Mk1), RomSlot::Program, 0, 0x40000, {}, "2.00, R15209387", false, false, false, {},
-         baseLib::SHA256("f5dac35d450ab986570a209dff3816eec75cee669e161f54b51224b467dd0bcc"), 2},
-        {romDevices(RomDevice::Sc55Mk1), RomSlot::Internal, 0, 0x8000, {}, "1.10, R15199736", false, false, false, {},
-         baseLib::SHA256("2fe88ec39f3ef4b1de8cdf74527419467975c47f7aacfcd07605e01d54bd89b5"), 3},
-        {romDevices(RomDevice::Sc55Mk1), RomSlot::Program, 0, 0x40000, {}, "1.10, R15209275", false, false, false, {},
-         baseLib::SHA256("ec064d6c4fc70ec990911089d966043cb819fba0e26e6f6afdd0a05e5301b91b"), 3},
-        {romDevices(RomDevice::Sc55Mk1), RomSlot::Internal, 0, 0x8000, {}, "1.00, R15199748", false, false, false, {},
-         baseLib::SHA256("b4ecf44bc0520322b0d114d397951d3bf92ca6fa51d0d27b2407df58a6be2efe"), 4},
-        {romDevices(RomDevice::Sc55Mk1), RomSlot::Program, 0, 0x40000, {}, "1.00, R15449258", false, false, false, {},
-         baseLib::SHA256("014e2e21ea30de7a1e4f1cdea14dd9a719960535e257a9e40e98dbb1a5870226"), 4},
+        {romDevices(RomDevice::Sc55Mk1), RomSlot::Program, 0, 0x40000, baseLib::MD5("181b86f1c5a81caa65b6cebbf7c2678b"),
+         "1.20, R15209337", false, false, false, {}, {}, 1},
+        {romDevices(RomDevice::Sc55Mk1), RomSlot::Internal, 0, 0x8000, baseLib::MD5("6b74988a79c2a48239809f07a54175b3"),
+         "2.00, R15199799", false, false, false, {}, {}, 2},
+        {romDevices(RomDevice::Sc55Mk1), RomSlot::Program, 0, 0x40000, baseLib::MD5("d79cf9c9aa88416372cb0fd318f79beb"),
+         "2.00, R15209387", false, false, false, {}, {}, 2},
+        {romDevices(RomDevice::Sc55Mk1), RomSlot::Internal, 0, 0x8000, baseLib::MD5("b301bfdaac9650ac97322f533396fdfb"),
+         "1.10, R15199736", false, false, false, {}, {}, 3},
+        {romDevices(RomDevice::Sc55Mk1), RomSlot::Program, 0, 0x40000, baseLib::MD5("c0f0c8c2ffcfaf9a56c7e0d2dd440857"),
+         "1.10, R15209275", false, false, false, {}, {}, 3},
+        {romDevices(RomDevice::Sc55Mk1), RomSlot::Internal, 0, 0x8000, baseLib::MD5("c4e923344906aa630ab1b950720db386"),
+         "1.00, R15199748", false, false, false, {}, {}, 4},
+        {romDevices(RomDevice::Sc55Mk1), RomSlot::Program, 0, 0x40000, baseLib::MD5("7e90b34c777e2c5e1277ae559d959c26"),
+         "1.00, R15449258", false, false, false, {}, {}, 4},
         {romDevices(RomDevice::Sc55Mk1, RomDevice::Sc155), RomSlot::Wave, 0, 0x100000,
          baseLib::MD5("5f40d5297f47358ddea43b8d225874cc"), "R15209276", false},
         {romDevices(RomDevice::Sc55Mk1, RomDevice::Sc155), RomSlot::Wave, 1, 0x100000,
@@ -767,12 +819,12 @@ namespace emu88Lib
          baseLib::MD5("31883de733ad34858bfd262b8fcf2fb6"), "R15199827", false},
         {romDevices(RomDevice::Scb55), RomSlot::Program, 0, 0x40000, baseLib::MD5("89d8263a413326249c042da8bcd0fda1"),
          "R15279828", false},
-        // The RLP-3237's own program 2.01 and its single 16 Mbit wave ROM haven't been
-        // dumped here, so they are catalogued from the SHA-256 digests.
+        // The RLP-3237's own program 2.01 hasn't been dumped here, so it is catalogued
+        // from the SHA-256 digest.
         {romDevices(RomDevice::Rlp3237), RomSlot::Program, 0, 0x40000, {}, "2.01, R15209486", false, false, false, {},
          baseLib::SHA256("e0a3d6d9b05e82374a0d289901273ce560ce1ead86459c75f844158b32d204a9")},
-        {romDevices(RomDevice::Rlp3237), RomSlot::Wave, 0, 0x200000, {}, "R15279824", false, false, false, {},
-         baseLib::SHA256("dae2a8bc0fd3bcaf3f5e3ab6c4c6fd30e2663bf26ca17afe52924874c0afc4e2")},
+        {romDevices(RomDevice::Rlp3237), RomSlot::Wave, 0, 0x200000, baseLib::MD5("16c605f5c3e7c6870706b8b23dcca269"),
+         "R15279824", false},
         {romDevices(RomDevice::Sc155), RomSlot::Internal, 0, 0x8000, baseLib::MD5("6b74988a79c2a48239809f07a54175b3"),
          "R15199799", false},
         {romDevices(RomDevice::Sc155), RomSlot::Program, 0, 0x40000, baseLib::MD5("5c7c6ab34ef6da079b05a36fd23c9c91"),
@@ -902,6 +954,10 @@ namespace emu88Lib
             return "MV-30";
         case RomDevice::Sk88Pro:
             return "SK-88Pro";
+        case RomDevice::Sc880:
+            return "SC-880";
+        case RomDevice::ProE:
+            return "PRO-E";
         default:
             return "unknown";
         }

@@ -51,6 +51,19 @@ PluginEditorState::PluginEditorState(Processor& _processor, pluginLib::Controlle
 PluginEditorState::~PluginEditorState()
 = default;
 
+void PluginEditorState::destroyEditor()
+{
+	if (!m_editor)
+		return;
+
+	// The product's editor and the base editor take elements out of the tree in their destructors, without the RmlUi
+	// lock, while the render thread of a shown editor still draws that tree (BUG-10530: crash on a skin change)
+	if (auto* rmlComponent = m_editor->getRmlComponent())
+		rmlComponent->stopRendering();
+
+	m_editor.reset();
+}
+
 int PluginEditorState::getWidth() const
 {
 	return m_editor ? m_editor->getDefaultWidth() : 0;
@@ -160,7 +173,7 @@ bool PluginEditorState::loadSkin(const Skin& _skin, const uint32_t _fallbackInde
 		getEditor()->getPerInstanceConfig(m_instanceConfig);
 
 		hasSettingsOpened = m_editor->settingsOpened();
-		m_editor.reset();
+		destroyEditor();
 	}
 
 	m_rootScale = 1.0f;
@@ -171,6 +184,11 @@ bool PluginEditorState::loadSkin(const Skin& _skin, const uint32_t _fallbackInde
 		if(skin.folder.empty() && !m_processor.findResource(skin.filename))
 		{
 			skin.folder = baseLib::filesystem::validatePath(getSkinFolder() + skin.displayName);
+
+			// not there either: an embedded skin that this build no longer has, the default skin instead
+			const auto skinFile = Editor::getAbsoluteSkinFolder(m_processor, skin.folder) + skin.filename;
+			if (!m_includedSkins.empty() && !juce::File(juce::String::fromUTF8(skinFile.c_str())).existsAsFile())
+				skin = m_includedSkins[0];
 		}
 
 		if (!skin.folder.empty())
@@ -294,7 +312,7 @@ bool PluginEditorState::loadSkin(const Skin& _skin, const uint32_t _fallbackInde
 
 		genericUI::MessageBox::showOk(genericUI::MessageBox::Icon::Warning, m_processor.getProperties().name + " - Skin load failed", _err.what());
 
-		m_editor.reset();
+		destroyEditor();
 
 		if(_fallbackIndex >= m_includedSkins.size())
 			return false;

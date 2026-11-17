@@ -3,6 +3,7 @@
 #include <cstring>
 
 #include "rom.h"
+#include "state.h"
 
 #include "synthLib/deviceException.h"
 
@@ -39,6 +40,11 @@ namespace jeLib
 		};
 
 		constexpr uint32_t KeyboardSwitchRows = 32;
+
+		// The rack firmware keeps its system parameters in SRAM at 0x217010, in the order of the system dump. Remote KBD
+		// CH is the last of them: 0-15 = channel 1-16, 16 = ALL
+		constexpr uint32_t RackRemoteKeyboardChannel = 0x217028;
+		constexpr uint8_t RemoteKeyboardChannelAll = 16;
 	}
 
 	Je8086::Je8086(const std::vector<uint8_t>& _romData, const std::vector<uint8_t>& _ramData)
@@ -50,6 +56,7 @@ namespace jeLib
 	, m_rackStatusLine(&m_catchAll)
 	, m_midiOutParser(synthLib::MidiEventSource::Device)
 	, m_midiInRateLimiter([this](const uint8_t _byte) { m_machine.periph().receive(0, _byte); })
+	, m_remoteKeyboardRateLimiter([this](const uint8_t _byte) { m_machine.periph().receive(1, _byte); })
 	{
 		m_frontPanel.evButton.addListener([this](const uint32_t _button, const bool _pressed)
 		{
@@ -133,6 +140,9 @@ namespace jeLib
 			return !synthLib::isUniversalTuningSysex(_sysex);
 		});
 
+		m_remoteKeyboardRateLimiter.setSamplerate(88200.0f);
+		m_remoteKeyboardRateLimiter.setDefaultRateLimit();
+
 		// The firmware rewrites the LCD with the same content on every edit. Each update replaces what the editor
 		// shows on it, a parameter readout too, so only content that changed goes out
 		m_lcd.setChangeCallback([this]
@@ -168,6 +178,7 @@ namespace jeLib
 		if (_event.type == synthLib::MidiEventType::TransportDiscontinuity)
 		{
 			m_midiInRateLimiter.transportDiscontinuity(_event.transportGeneration);
+			m_remoteKeyboardRateLimiter.transportDiscontinuity(_event.transportGeneration);
 			return;
 		}
 
@@ -285,7 +296,68 @@ namespace jeLib
 		m_controllerThinner.flush(m_controllerThinnerClock);
 
 		m_midiInRateLimiter.processSample();
+		if (m_isRack)
+			m_remoteKeyboardRateLimiter.processSample();
 		m_sampleBuffer.emplace_back(_left, _right);
+	}
+
+	void Je8086::purgeSuperseded(const synthLib::SysexBuffer& _sysex)
+	{
+		// A whole performance or patch replaces what still waits for the temp performance, and the requests to read it
+		// back. Otherwise browsing through presets queues every one of them at MIDI speed and the synth follows seconds
+		// later (BUG-10208)
+		constexpr size_t frameSize = 12;	// header, command, address, checksum, EOX
+
+		if (_sysex.size() <= frameSize || _sysex[5] != static_cast<uint8_t>(SysexByte::CommandIdDataSet1) ||
+			State::getAddressArea(_sysex) != AddressArea::PerformanceTemp)
+			return;
+
+		const auto offset = State::getAddress(_sysex) & 0xffff;
+		const auto size = _sysex.size() - frameSize;
+
+		uint32_t block;	// the temp performance block it replaces, 0 = all of it
+
+		if (offset == static_cast<uint32_t>(PerformanceData::PerformanceCommon) && size >= static_cast<size_t>(PerformanceCommon::DataLengthKeyboard))
+			block = 0;
+		else if ((offset == static_cast<uint32_t>(PerformanceData::PatchUpper) || offset == static_cast<uint32_t>(PerformanceData::PatchLower)) &&
+			size >= static_cast<size_t>(Patch::DataLengthKeyboard))
+			block = offset;
+		else
+			return;
+
+		m_midiInRateLimiter.purgePendingSysex([block](const synthLib::SMidiEvent& _queued)
+		{
+			if (State::getAddressArea(_queued.sysex) != AddressArea::PerformanceTemp)
+				return false;
+
+			// a rack patch continues in a second dump at 01 72
+			return block == 0 || (State::getAddress(_queued.sysex) & 0xfe00) == block;
+		});
+	}
+
+	void Je8086::writeMidiIn(const synthLib::SMidiEvent& _ev)
+	{
+		if (!_ev.sysex.empty())
+			purgeSuperseded(_ev.sysex);
+
+		if (!m_isRack || !_ev.sysex.empty())
+		{
+			m_midiInRateLimiter.write(synthLib::SMidiEvent(_ev));
+			return;
+		}
+
+		// clock, start and stop to both, the firmware's MIDI Sync setting picks the input it follows
+		if (_ev.a >= 0xf0)
+		{
+			m_midiInRateLimiter.write(synthLib::SMidiEvent(_ev));
+			m_remoteKeyboardRateLimiter.write(synthLib::SMidiEvent(_ev));
+			return;
+		}
+
+		const auto remoteChannel = m_machine.bus().read8(RackRemoteKeyboardChannel);
+		const bool remote = remoteChannel >= RemoteKeyboardChannelAll || remoteChannel == (_ev.a & 0x0f);
+
+		(remote ? m_remoteKeyboardRateLimiter : m_midiInRateLimiter).write(synthLib::SMidiEvent(_ev));
 	}
 
 	std::vector<uint8_t> Je8086::runFactoryReset()

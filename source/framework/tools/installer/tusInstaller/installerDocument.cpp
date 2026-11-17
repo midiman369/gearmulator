@@ -8,8 +8,10 @@
 #include "changelogPage.h"
 #include "detailPage.h"
 #include "installerDataProvider.h"
+#include "offlinePage.h"
 #include "pluginEntryController.h"
 #include "preferencesPage.h"
+#include "tickChip.h"
 
 #include "pluginManagerLib/config.h"
 #include "pluginManagerLib/httpClient.h"
@@ -238,6 +240,14 @@ namespace pluginManager
 			});
 		}
 
+		if (auto* offline = _doc.GetElementById("offline-button"))
+		{
+			juceRmlUi::EventListener::Add(offline, Rml::EventId::Click, [this](Rml::Event&)
+			{
+				post([this] { showPage(m_page == Page::Offline ? Page::List : Page::Offline); });
+			});
+		}
+
 		m_installSelected = _doc.GetElementById("install-selected");
 		m_upgradeAll = _doc.GetElementById("upgrade-all");
 
@@ -334,7 +344,11 @@ namespace pluginManager
 			// anywhere - and asking the rows is what carries it through a rebuild, since the rows are
 			// built before this runs and carry what they were given back.
 			chip->SetClassNames(isFormatSelectedAnywhere(format) ? "format-label checked" : "format-label");
-			chip->SetInnerRML(format);
+
+			// The box says whether it is ticked, as on the chips in the rows (BUG-10562). The format is
+			// kept on the chip as well, since its text is no longer only the name.
+			chip->SetAttribute("format", format);
+			chip->SetInnerRML(tickChipRml(format));
 
 			juceRmlUi::EventListener::Add(chip, Rml::EventId::Click, [this, chip, format](Rml::Event&)
 			{
@@ -374,6 +388,7 @@ namespace pluginManager
 			auto& selection = m_selection[id];
 
 			selection.fx = e->getIntAttribute("fx", 0) != 0;
+			selection.instr = e->getIntAttribute("instr", 1) != 0;
 
 			for (const auto& format : juce::StringArray::fromTokens(
 				e->getStringAttribute("selected"), ",", {}))
@@ -392,7 +407,7 @@ namespace pluginManager
 		{
 			// Nothing ticked and no effect build asked for is what a row looks like untouched. Writing
 			// those out would put every product on the server into the file to say nothing.
-			if (selection.selectedFormats.empty() && !selection.fx)
+			if (selection.selectedFormats.empty() && !selection.fx && selection.instr)
 				continue;
 
 			auto* e = xml.createNewChildElement("product");
@@ -400,6 +415,9 @@ namespace pluginManager
 
 			if (selection.fx)
 				e->setAttribute("fx", 1);
+
+			if (!selection.instr)
+				e->setAttribute("instr", 0);
 
 			juce::StringArray formats;
 
@@ -416,20 +434,36 @@ namespace pluginManager
 		xml.writeTo(file);
 	}
 
+	// Written as soon as it changes rather than on the way out: an update starts the new copy of this
+	// program before this one has quit, and the new one reads the file straight away. Written only on
+	// the way out, every tick since the last refresh was lost to it - formats unticked at the top came
+	// back ticked, and "Install selected" put builds nobody had asked for on the machine.
+	//
+	// Only when something did change, since a row also reports every change of what is installed.
 	void InstallerDocument::rememberSelection()
 	{
+		bool changed = false;
+
 		for (const auto& entry : m_entries)
 		{
 			const auto selected = entry->getSelectedFormats();
 
-			auto& selection = m_selection[entry->getProductId()];
+			Selection now;
+			now.selectedFormats.insert(selected.begin(), selected.end());
+			now.fx = entry->isFxSelected();
+			now.instr = entry->isInstrSelected();
 
-			selection.selectedFormats.clear();
-			selection.selectedFormats.insert(selected.begin(), selected.end());
-			selection.fx = entry->isFxSelected();
+			auto& known = m_selection[entry->getProductId()];
+
+			if (known.selectedFormats == now.selectedFormats && known.fx == now.fx && known.instr == now.instr)
+				continue;
+
+			known = std::move(now);
+			changed = true;
 		}
 
-		saveSelection();
+		if (changed)
+			saveSelection();
 	}
 
 	void InstallerDocument::applySelection(PluginEntryController& _entry) const
@@ -442,7 +476,9 @@ namespace pluginManager
 		for (const auto& format : it->second.selectedFormats)
 			_entry.setFormatSelected(format, true);
 
+		// The effect build first: the instrument cannot be unticked while it is not ticked.
 		_entry.setFxSelected(it->second.fx);
+		_entry.setInstrSelected(it->second.instr);
 	}
 
 	// Empty rather than vacuously true when there is nothing on offer: a list with no rows must not
@@ -488,7 +524,7 @@ namespace pluginManager
 			if (!chip->IsClassSet("format-label"))
 				continue;
 
-			chip->SetClass("checked", isFormatSelectedAnywhere(chip->GetInnerRML()));
+			chip->SetClass("checked", isFormatSelectedAnywhere(chip->GetAttribute<Rml::String>("format", "")));
 		}
 	}
 
@@ -663,6 +699,31 @@ namespace pluginManager
 		}
 	}
 
+	void InstallerDocument::createOfflinePage(Rml::ElementDocument& _doc, PluginManager& _pluginManager)
+	{
+		if (m_offline)
+			return;
+
+		m_offline = std::make_unique<OfflinePage>(_doc, _pluginManager, *m_rmlComponent);
+		m_offline->setOnSource([this](const std::string& _folder) { setSource(_folder); });
+
+		if (auto* back = m_offline->getBackButton())
+			juceRmlUi::EventListener::Add(back, Rml::EventId::Click, [this](Rml::Event&) { post([this] { showPage(Page::List); }); });
+	}
+
+	void InstallerDocument::setSource(const std::string& _folder)
+	{
+		if (!m_pluginManager)
+			return;
+
+		m_pluginManager->setLocalFolder(_folder);
+
+		showPage(Page::List);
+
+		if (m_onRefresh)
+			m_onRefresh();
+	}
+
 	void InstallerDocument::closePreferences()
 	{
 		if (!m_preferences)
@@ -704,6 +765,37 @@ namespace pluginManager
 					m_preferences->refresh();
 
 				m_preferences->getPage()->SetClass("open", _page == Page::Preferences);
+			}
+
+			if (m_offline && m_offline->getPage())
+			{
+				// What the list has ticked is what the page starts with, the first time it is opened.
+				if (_page == Page::Offline && m_pluginManager)
+				{
+					OfflinePage::Ticked ticked;
+
+					for (const auto& entry : m_entries)
+					{
+						const auto formats = entry->getSelectedFormats();
+
+						if (formats.empty())
+							continue;
+
+						ticked.formats.insert(formats.begin(), formats.end());
+
+						if (entry->isInstrSelected())
+							ticked.products.insert(entry->getProductId());
+
+						const auto fx = m_pluginManager->getCatalog().fxProductOf(entry->getProductId());
+
+						if (entry->isFxSelected() && !fx.empty())
+							ticked.products.insert(fx);
+					}
+
+					m_offline->refresh(ticked);
+				}
+
+				m_offline->getPage()->SetClass("open", _page == Page::Offline);
 			}
 		});
 	}
@@ -916,6 +1008,7 @@ namespace pluginManager
 			updateBulkButtons();
 
 			createPreferencesPage(_doc, _pluginManager);
+			createOfflinePage(_doc, _pluginManager);
 		});
 
 		// A refresh can take the product being shown away with it - a team logout hides everything
@@ -963,7 +1056,7 @@ namespace pluginManager
 			}
 			else
 			{
-				m_selfUpdate->SetInnerRML("Update Plugin Manager to " + asset->version);
+				m_selfUpdate->SetInnerRML("Update Plugin Manager to " + Rml::StringUtilities::EncodeRml(asset->version));
 				m_selfUpdate->SetAttribute("title", "Plugin Manager " + asset->version + " is available, this is " +
 					std::string(g_appVersion));
 			}
@@ -1075,7 +1168,11 @@ namespace pluginManager
 		// mistaken for the user doing it.
 		applySelection(*controller);
 
-		controller->setOnChanged([this] { updateBulkButtons(); });
+		controller->setOnChanged([this]
+		{
+			rememberSelection();
+			updateBulkButtons();
+		});
 
 		m_entries.push_back(std::move(controller));
 	}
@@ -1168,7 +1265,11 @@ namespace pluginManager
 			return m_problem.empty() ? "No builds available for this platform" : m_problem;
 		}
 
-		const auto count = std::to_string(_shown) + (_shown == 1 ? " plugin" : " plugins") + hidden;
+		// Said first, so that a list that is short because the folder is says why (BUG-10543).
+		const auto from = m_pluginManager && !m_pluginManager->getLocalFolder().empty()
+			? "From " + m_pluginManager->getLocalFolder() + ": " : std::string();
+
+		const auto count = from + std::to_string(_shown) + (_shown == 1 ? " plugin" : " plugins") + hidden;
 
 		return m_problem.empty() ? count : count + ". " + m_problem;
 	}
@@ -1197,8 +1298,9 @@ namespace pluginManager
 
 	void InstallerDocument::setStatusInternal(Rml::ElementDocument& _doc, const std::string& _text)
 	{
+		// text, not RML: an error names files and logins
 		if (auto* statusText = _doc.GetElementById("status-text"))
-			statusText->SetInnerRML(_text);
+			statusText->SetInnerRML(Rml::StringUtilities::EncodeRml(_text));
 	}
 
 	// Whether there is a team login at all hides the whole section rather than the button in it,

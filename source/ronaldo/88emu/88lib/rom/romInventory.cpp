@@ -22,11 +22,12 @@ namespace emu88Lib
                 std::swap(_data[i], _data[i + 1]);
         }
 
-        // The SC-88Pro, the VE-GS Pro and the SK-88Pro are one board with different control
-        // ROMs: they share the wave set, its SC-8820/8850 donors and the oversized dumps.
+        // The SC-88Pro, the VE-GS Pro, the SK-88Pro and the SC-880 are one board with different
+        // control ROMs: they share the wave set, its SC-8820/8850 donors and the oversized dumps.
         constexpr bool usesProBoard(const RomDevice _device)
         {
-            return _device == RomDevice::Sc88Pro || _device == RomDevice::VeGsPro || _device == RomDevice::Sk88Pro;
+            return _device == RomDevice::Sc88Pro || _device == RomDevice::VeGsPro || _device == RomDevice::Sk88Pro ||
+                   _device == RomDevice::Sc880;
         }
 
         // Inverse of WaveRom::unscramble. Pro ROM sets contain physical chip data,
@@ -42,6 +43,8 @@ namespace emu88Lib
         // The CM-64 is a CM-32L and a CM-32P in one case and needs both boards' images. It has
         // no registry rows of its own; everything asked of it is asked of its two halves.
         constexpr std::array<RomDevice, 2> g_cm64Halves{RomDevice::Cm32l, RomDevice::Cm32p};
+
+        constexpr RomDevice g_proeSoundBoard = RomDevice::Cm32l;
 
         // A composite slot's chips are an alternative to its whole image, never an
         // additional requirement: has() reports the whole as available once both chips
@@ -347,6 +350,9 @@ namespace emu88Lib
         if (_device == RomDevice::Cm64)
             return isComplete(RomDevice::Cm32l) && isComplete(RomDevice::Cm32p);
 
+        if (_device == RomDevice::ProE && !isComplete(g_proeSoundBoard))
+            return false;
+
         const auto slots = requiredSlots(_device);
         if (slots.empty())
             return false;
@@ -387,6 +393,11 @@ namespace emu88Lib
             reported.push_back(slot);
             result.push_back(&entry);
         }
+        if (_device == RomDevice::ProE)
+        {
+            const auto rows = missing(g_proeSoundBoard);
+            result.insert(result.end(), rows.begin(), rows.end());
+        }
         return result;
     }
 
@@ -409,6 +420,11 @@ namespace emu88Lib
                 continue;
             result.push_back(&spec);
         }
+        if (_device == RomDevice::ProE)
+        {
+            const auto specs = missingFiles(g_proeSoundBoard);
+            result.insert(result.end(), specs.begin(), specs.end());
+        }
         return result;
     }
 
@@ -419,7 +435,9 @@ namespace emu88Lib
         {
             for (const auto half : g_cm64Halves)
                 result << warnings(half, includeCustom);
-            return result.str();
+            if (device == RomDevice::ProE)
+            result << warnings(g_proeSoundBoard, includeCustom);
+        return result.str();
         }
         for (const auto& rom : m_roms)
         {
@@ -544,6 +562,8 @@ namespace emu88Lib
                          ? "The VE-GS Pro's headless program ROM (R01780078) runs as its own device.\n\n"
                          : _device == RomDevice::VeGsPro
                          ? "SC-88Pro control ROMs run as the SC-88Pro device.\n\n"
+                         : _device == RomDevice::Sc880
+                         ? "The SC-880's own wave ROMs have not been dumped; it plays the SC-88Pro's.\n\n"
                          : "The SK-88Pro's parameter mask ROM has not been dumped. The SC-88Pro 1.02 control "
                            "ROM carries the same tone data and stands in for it, next to the SK-88Pro's own "
                            "program EPROM.\n\n")
@@ -563,6 +583,9 @@ namespace emu88Lib
             text << "\nSCCore.dll / SCCore00.dylib can supply the SC-8820 wave regions without manual extraction. "
                     "They supply waves only; a separate control ROM is still required.\n";
         }
+        if (_device == RomDevice::ProE)
+            text << "The PRO-E's sound board, the CM-32L roms work.\n\n== " << toString(g_proeSoundBoard) << " ==\n"
+                 << describeRequirements(g_proeSoundBoard);
         return text.str();
     }
 

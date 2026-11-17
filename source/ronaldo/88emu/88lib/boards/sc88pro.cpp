@@ -2,6 +2,8 @@
 
 #include "88lib/rom/rom.h"
 
+#include "baseLib/md5.h"
+
 #include <algorithm>
 #include <cstdio>
 
@@ -35,20 +37,25 @@ namespace emu88Lib
 	}
 
 	Sc88Pro::Sc88Pro(std::vector<uint8_t> _firmware, const std::vector<uint8_t>& _waveRom,
-	                 const bool _factoryReset)
+	                 const bool _factoryReset, const Variant _variant)
 		: m_rom(std::move(_firmware))
+		, m_sram(_variant == Variant::Sc880 ? Sc880SramSize : SramSize, 0)
 		, m_waveRom(decodeWaveRom(_waveRom))
 		, m_xp()
 		, m_subMcu([this](Sc88SubMcu::Record&& _r) { m_midiInQueue.emplace_back(std::move(_r)); },
 		           SmSysExStage, SmCommand - SmSysExStage)
+		, m_variant(_variant)
 	{
-		if(m_rom.size() != RomSize && m_rom.size() != Sk88ProRomSize)
+		const uint32_t romSize = _variant == Variant::Sk88Pro ? Sk88ProRomSize
+			: _variant == Variant::Sc880                       ? Sc880RomSize
+			                                                   : RomSize;
+		if(m_rom.size() != romSize)
 		{
-			std::fprintf(stderr, "Sc88Pro: firmware must be %u or %u bytes, got %zu\n",
-			             RomSize, Sk88ProRomSize, m_rom.size());
+			std::fprintf(stderr, "Sc88Pro: firmware must be %u bytes, got %zu\n", romSize, m_rom.size());
 			return;
 		}
-		m_sk88Pro = m_rom.size() == Sk88ProRomSize;
+		if(_variant == Variant::Sc880)
+			m_dialFirmware = findDialFirmware(m_rom);
 
 		// Configure the existing xp core from the board: the Pro exposes
 		// five consecutive 4 MiB CS windows (A0/A1, B0/B1, C). Keep this
@@ -104,6 +111,7 @@ namespace emu88Lib
 		m_xp.reset();
 		m_machine.reset();
 		m_lcd.reset();
+		m_graphicLcd.reset();
 		m_lcdEnabled = true;
 		m_lsp.clear();
 
@@ -114,6 +122,10 @@ namespace emu88Lib
 		m_cycleFrac = 0;
 
 		m_buttons = 0;
+		m_dialPending = 0;
+		m_dialContact = 0;
+		m_dialReleased = 0;
+		m_dialCountdown = 0;
 		m_scanColumn = 0;
 		m_gaInt.fill(false);
 		m_gaIrqMask = 0x0f;
@@ -188,7 +200,33 @@ namespace emu88Lib
 
 		run(kBootWait);
 
-		if(m_sk88Pro)
+		if(m_variant == Variant::Sc880)
+		{
+			// The SC-880 has it as a utility page: UTILITY, five pages right to
+			// "Factory Preset", down onto "All", ENTER, and ENTER again at "Sure?".
+			// "Initializing..." is gone in under three seconds.
+			const auto press = [&](const Sc880Button _button)
+			{
+				setButtons(bit(_button));
+				run(kExecuteHold);
+				setButtons(0);
+				run(kKeyGap);
+			};
+			press(Sc880Button::Utility);
+			for(int page = 0; page < 5; ++page)
+				press(Sc880Button::Right);
+			press(Sc880Button::Down);
+			press(Sc880Button::Enter);
+			press(Sc880Button::Enter);
+			run(kExecuteSettle);
+
+			m_xpEnabled = xpEnabled;
+			m_lspEnabled = lspEnabled;
+			powerCycle();
+			return;
+		}
+
+		if(m_variant == Variant::Sk88Pro)
 		{
 			// The SK-88Pro asks "Init All, Sure?" for SHIFT and PART left, and ALL
 			// runs it. It boots on the native map afterwards, so the SC-88Pro's map
@@ -276,7 +314,7 @@ namespace emu88Lib
 		if(page <= PageRomLast)
 			v = m_rom[_addr & (m_rom.size() - 1)];		// mirrored every image size
 		else if(page >= PageSramFirst && page <= PageSramLast)
-			v = m_sram[off];
+			v = m_sram[sramOffset(_addr)];
 		else if(page == PageXp)
 			v = m_xp.hostRead8(off);
 		else if(page >= PageSubMcuFirst && page <= PageSubMcuLast)
@@ -295,7 +333,7 @@ namespace emu88Lib
 		const uint16_t off = static_cast<uint16_t>(_addr);
 
 		if(page >= PageSramFirst && page <= PageSramLast)
-			m_sram[off] = _val;
+			m_sram[sramOffset(_addr)] = _val;
 		else if(page == PageXp)
 			m_xp.hostWrite8(off, _val);
 		else if(page >= PageSubMcuFirst && page <= PageSubMcuLast)
@@ -350,7 +388,8 @@ namespace emu88Lib
 		// The Pro's physical POWER switch is on the mains side, outside the panel matrix.
 		// The SK-88Pro writes the low nibble as a four-bit value (12:5051) and selects
 		// its ADC multiplexer with bits 6 and 7, so bit 0 is no display supply there.
-		else if(_addr == 0xfe8b && !m_sk88Pro)
+		// What the SC-880 wires to it is not known.
+		else if(_addr == 0xfe8b && m_variant == Variant::Sc88Pro)
 			m_lcdEnabled = (_val & 1) != 0;
 	}
 
@@ -381,7 +420,7 @@ namespace emu88Lib
 			for(uint8_t col = 0; col < 4; ++col)
 			{
 				if(m_scanColumn & (1u << col))
-					rows &= static_cast<uint8_t>(~((m_buttons >> (col * 8)) & 0xff));
+					rows &= static_cast<uint8_t>(~(((m_buttons | m_dialContact) >> (col * 8)) & 0xff));
 			}
 			return rows;
 		}
@@ -404,7 +443,11 @@ namespace emu88Lib
 			m_subMcuStarted = true;
 		}
 		else if(_addr == SmPanelData)
-			m_scanColumn = _val & 0x0f;
+		{
+			// The SC-88Pro drives its column one-hot; the SC-880 pulls its column low
+			// (0E, 0D, 0B, 07, idle 0F).
+			m_scanColumn = (m_variant == Variant::Sc880 ? ~_val : _val) & 0x0f;
+		}
 	}
 
 	// =====================================================================
@@ -416,13 +459,121 @@ namespace emu88Lib
 		// The SK-88Pro drives ALL, MUTE, SC-55 MAP and SC-88 MAP on LDD4-7, active high,
 		// and never enables the SC-88Pro's lamp supply. Measured by watching the port
 		// while pressing each key. Its other lamps are not known yet.
-		if(m_sk88Pro)
+		if(m_variant == Variant::Sk88Pro)
 			return static_cast<uint16_t>(m_leds >> 4);
+		if(m_variant == Variant::Sc880)
+			return static_cast<uint16_t>(m_leds | ((~m_ledControl & 3u) << 8));
 
 		// LDS0 drives the common anode supply through Q3; LDS1 drives the red cathode through Q4.
 		if(m_ledControl & 1)
 			return 0;
 		return static_cast<uint16_t>(m_leds | ((m_ledControl & 2) << 7));
+	}
+
+	void Sc88Pro::turnDial(const int32_t _detents)
+	{
+		if(m_variant != Variant::Sc880)
+			return;
+		m_dialPending += _detents;
+	}
+
+	void Sc88Pro::stepDial()
+	{
+		// The scan reads the matrix every 24 ms or so; a pulse and the gap after it last two scans.
+		// With a known firmware they end as soon as its edge detector has taken them.
+		constexpr uint32_t pulseSamples = g_sampleRate * 80 / 1000;
+		if(m_dialCountdown)
+		{
+			--m_dialCountdown;
+			const bool taken = m_dialContact ? dialKeyTaken(m_dialContact, true) : dialKeyTaken(m_dialReleased, false);
+			if(!taken)
+				return;
+			m_dialCountdown = 0;
+		}
+		if(m_dialContact)
+		{
+			m_dialReleased = m_dialContact;
+			m_dialContact = 0;
+			m_dialCountdown = pulseSamples;
+			return;
+		}
+		if(!m_dialPending || !canQueueDialKeys())
+			return;
+		const auto contact = m_dialPending > 0 ? Sc880Button::DialInc : Sc880Button::DialDec;
+		const auto step = m_dialPending > 0 ? -1 : 1;
+		if(m_dialFirmware)
+		{
+			while(m_dialPending + step != 0 && queueDialDetent(static_cast<uint8_t>(contact)))
+				m_dialPending += step;
+		}
+		m_dialContact = uint32_t{1} << static_cast<uint8_t>(contact);
+		m_dialPending += step;
+		m_dialCountdown = pulseSamples;
+	}
+
+	const Sc88Pro::DialFirmware* Sc88Pro::findDialFirmware(const std::vector<uint8_t>& _rom)
+	{
+		// SC-880 1.04. The scan (11:0084) stores a row byte per column at C0:4476; the edge
+		// detector (10:2958) turns every changed bit into key code column*8+row, bit 7 set
+		// on release, stores the rows it took at C0:4472 and pushes the code (11:00E2) onto
+		// a byte ring that the UI task pops (10:2B0E) once the push has woken it (TRAPA #11).
+		static const baseLib::MD5 sc880v104Hash("052707d6a9ec7c4f03d60d1f10464bf0");
+		static constexpr DialFirmware sc880v104{0x4476, 0x4472, 0x446e, 0x4470, 0x447a, 0x449b, 0x449d,
+		                                        0x11, 0x00e2, 0x0125};
+		return baseLib::MD5(_rom) == sc880v104Hash ? &sc880v104 : nullptr;
+	}
+
+	bool Sc88Pro::dialKeyTaken(const uint32_t _contact, const bool _closed) const
+	{
+		if(!m_dialFirmware || !_contact)
+			return false;
+		uint32_t bit = 0;
+		while(!(_contact & (uint32_t{1} << bit)))
+			++bit;
+		const bool open = m_sram[m_dialFirmware->processedRows + bit / 8] & (1u << (bit & 7));
+		return open != _closed;
+	}
+
+	bool Sc88Pro::canQueueDialKeys() const
+	{
+		if(!m_dialFirmware)
+			return true;
+		// Nothing for the edge detector to push, and the CPU is not halfway through a push.
+		const auto& fw = *m_dialFirmware;
+		for(uint16_t col = 0; col < 4; ++col)
+			if(m_sram[fw.scannedRows + col] != m_sram[fw.processedRows + col])
+				return false;
+		const auto& regs = m_machine.cpu().regs();
+		return regs.cp != fw.pushPage || regs.pc < fw.pushFirst || regs.pc >= fw.pushEnd;
+	}
+
+	bool Sc88Pro::queueDialDetent(const uint8_t _code)
+	{
+		// What the firmware's own push does for a press and its release, minus waking the UI.
+		const auto& fw = *m_dialFirmware;
+		const auto word = [this](const uint16_t _a)
+		{
+			return static_cast<uint16_t>(m_sram[_a] << 8 | m_sram[_a + 1]);
+		};
+		const auto advance = [&fw](const uint16_t _p)
+		{
+			return _p + 1 == fw.keyRingEnd ? fw.keyRingFirst : static_cast<uint16_t>(_p + 1);
+		};
+		const uint16_t read = word(fw.keyReadPtr);
+		const uint16_t press = word(fw.keyWritePtr);
+		if(press < fw.keyRingFirst || press >= fw.keyRingEnd)
+			return false;
+		const uint16_t release = advance(press);
+		const uint16_t next = advance(release);
+		if(release == read || next == read)
+			return false;
+		m_sram[press] = _code;
+		m_sram[release] = static_cast<uint8_t>(_code | 0x80);
+		m_sram[fw.keyWritePtr] = static_cast<uint8_t>(next >> 8);
+		m_sram[fw.keyWritePtr + 1] = static_cast<uint8_t>(next);
+		// The key's held flag, which the push sets on a press and clears on a release.
+		m_sram[fw.keyState + _code] &= static_cast<uint8_t>(~2);
+		return true;
 	}
 
 	uint8_t Sc88Pro::gateArrayRead(const uint16_t _addr)
@@ -464,10 +615,21 @@ namespace emu88Lib
 			m_lcdInstr = _val;
 			return;
 		case GaLcdStart:
-			if(!(_val & 1))
-				m_lcd.write(false, m_lcdInstr);
-			for(uint32_t i = 0; i < m_lcdStaged; ++i)
-				m_lcd.write(true, m_lcdBuffer[i]);
+			// Bit 0 set sends the staged data alone, without the instruction.
+			if(m_variant == Variant::Sc880)
+			{
+				if(!(_val & 1))
+					m_graphicLcd.writeInstruction(m_lcdInstr);
+				for(uint32_t i = 0; i < m_lcdStaged; ++i)
+					m_graphicLcd.writeData(m_lcdBuffer[i]);
+			}
+			else
+			{
+				if(!(_val & 1))
+					m_lcd.write(false, m_lcdInstr);
+				for(uint32_t i = 0; i < m_lcdStaged; ++i)
+					m_lcd.write(true, m_lcdBuffer[i]);
+			}
 			m_lcdStaged = 0;
 			// The gate array pulses its LCD-ready line shortly after a burst.
 			if(m_gaLcdEvent)
@@ -633,7 +795,7 @@ namespace emu88Lib
 		// Only the battery sense is wired: channel 0 on the SC-88Pro, channel 2 on the
 		// SK-88Pro, whose firmware shows "Battery Low" at power-on when it reads nothing
 		// there. Its other channels are keyboard controls and read as at rest.
-		const unsigned batteryChannel = m_sk88Pro ? 2 : 0;
+		const unsigned batteryChannel = m_variant == Variant::Sk88Pro ? 2 : 0;
 		m_machine.adc().set_sampler([batteryChannel](const unsigned _channel) -> uint16_t
 		{
 			return _channel == batteryChannel ? g_analogBattery : uint16_t(0);
@@ -649,6 +811,7 @@ namespace emu88Lib
 			return {0, 0};
 
 		++m_samplesRendered;
+		stepDial();
 		m_subMcu.clockOutput(m_subMcuRam, g_sampleRate);
 		pumpMidiIn();
 
@@ -692,9 +855,12 @@ namespace emu88Lib
 			// core's left as word 0 reproduces that (8.1 dB); either half
 			// swapped alone mirrors the effect, which is what made the two
 			// overdrives trade places.
+			// The XP sends each word as its 18 high bits (0x3932 = 0x0010) and
+			// the LSP samples those 18.
+			constexpr int32_t sendBits = ~0x3f;
 			const SampleFrame lspInput{
-				sendCount > 0 ? busB[0] : 0,
-				sendCount > 1 ? busB[1] : 0,
+				sendCount > 0 ? busB[0] & sendBits : 0,
+				sendCount > 1 ? busB[1] & sendBits : 0,
 			};
 			const auto lspOutput = m_lsp.process(lspInput);
 			// The return enters the XP eight bits below the LSP's 24-bit datapath.

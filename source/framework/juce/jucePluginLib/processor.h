@@ -171,16 +171,20 @@ namespace pluginLib
 		virtual void processBpm(float _bpm) {}
 
 		bool rebootDevice();
+		// The reboot the user asks for: the product first looks for firmware images it has not listed yet, a ROM copied
+		// into the ROM folder after the plugin was loaded for example
+		bool rescanFirmwareAndReboot();
 
 		// An optional voice expansion board of the hardware. It is saved with the plugin state, the device gets it as bit 0
 		// of customData and is created again when it changes
 		bool isVoiceExpansionEnabled() const { return m_voiceExpansion; }
 		void setVoiceExpansion(bool _enabled);
 
-		// A product that runs one of several firmware images (ROMs, applications) lists them once with setFirmwareImages
-		// and reads getFirmwareIndex() when it creates its device. The choice is saved in a chunk with the product's own
-		// id, version and payload, before REMO and the device state, so that a state switches the firmware first.
-		// Selecting another image creates the device again; if that fails, the running one stays selected
+		// A product that runs one of several firmware images (ROMs, applications) lists them with setFirmwareImages, appends
+		// the ones it finds later in findNewFirmwareImages() and reads getFirmwareIndex() when it creates its device. The
+		// choice is saved in a chunk with the product's own id, version and payload, before REMO and the device state, so
+		// that a state switches the firmware first. Selecting another image creates the device again; if that fails, the
+		// running one stays selected
 		struct FirmwareChunk
 		{
 			char id[5];		// four characters, "ROM "
@@ -196,7 +200,8 @@ namespace pluginLib
 		bool selectFirmware(uint32_t _index);
 
 		// retained, a listener gets the current index when it is added. A state loaded by the host invokes it on the
-		// host's thread
+		// host's thread. Also invoked when rescanFirmwareAndReboot() found new images: without one before, the selected
+		// image is a new one. For a product without a list of images, invoked after each rescanFirmwareAndReboot()
 		baseLib::Event<uint32_t> evFirmwareChanged;
 
 		auto& getMidiPorts() { return m_midiPorts; }
@@ -234,9 +239,20 @@ namespace pluginLib
 	protected:
 		void destroyController();
 
+		// Looks for the firmware images again, appends the ones not listed yet and returns their names. A listed image
+		// keeps its index, so the selected one stays selected. Called on the message thread
+		virtual std::vector<std::string> findNewFirmwareImages() { return {}; }
+
 	private:
 		void prepareToPlay(double sampleRate, int maximumExpectedSamplesPerBlock) override;
 		void releaseResources() override;
+		void processorLayoutsChanged() override;
+
+		// The device output of each output channel. The output buses carry the outputs in the order they are declared,
+		// whether the host turned some off or not. A bus declared mono carries one output alone, the n-th of them the
+		// n-th output: a product offers its outputs singly that way, beside the stereo pairs, off by default. Empty while
+		// each channel carries its own, in order
+		void updateOutputMap();
 
 		//==============================================================================
 		bool isBusesLayoutSupported(const BusesLayout&) const override;
@@ -347,6 +363,8 @@ namespace pluginLib
 		SkinVariables m_skinVariables;
 		MidiNotifier m_midiNotifier;
 		BypassBuffer m_bypassBuffer;
+		std::vector<uint32_t> m_outputMap;	// see updateOutputMap
+		juce::AudioBuffer<float> m_outputScratch;	// what the device renders while there is an output map
 		DeviceType m_deviceType = DeviceType::Local;
 		std::string m_remoteHost;
 		uint32_t m_remotePort = 0;

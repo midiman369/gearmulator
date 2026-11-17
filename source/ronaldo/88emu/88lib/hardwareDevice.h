@@ -30,6 +30,7 @@ namespace emu88Lib
 	class Nu10b;
 	class Miig5;
 	class Mv30;
+	class ProE;
 
 	// Offline work the device does at construction, before anyone can hear or see it.
 	struct BootOptions
@@ -58,6 +59,7 @@ namespace emu88Lib
 				Type type = Type::None;
 				std::array<uint8_t, 80> ddRam{};
 				std::array<uint8_t, 64> cgRam{};
+				std::array<uint8_t, 25> dseg{};  //  SC-880 digital segment
 				std::vector<uint8_t> mono;
 				// The visible characters of a character display, one string per line, in the
 				// controller's character set (ASCII for the printable range). Empty on a
@@ -70,6 +72,7 @@ namespace emu88Lib
 				// leaves the glass dark, where a display that is merely off still shows its backlight.
 				// displayOn is false as well then.
 				bool powered = true;
+				bool hasDigitalSegment = false;
 			};
 
 			// Only a board with two panels fills the second - see deviceHasSecondLcd(), which is
@@ -164,6 +167,7 @@ namespace emu88Lib
 		std::unique_ptr<Nu10b> m_nu10b;
 		std::unique_ptr<Miig5> m_miig5;
 		std::unique_ptr<Mv30> m_mv30;
+		std::unique_ptr<ProE> m_proe;
 		std::unique_ptr<synthLib::MidiRateLimiter> m_sc55MidiIn;
 		std::array<synthLib::MidiBufferParser, 2> m_sc88ProMidiOut{
 			synthLib::MidiBufferParser{synthLib::MidiEventSource::Device},

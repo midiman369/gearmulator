@@ -67,22 +67,24 @@ namespace pluginManager
 		default:                  return {};
 		}
 #elif JUCE_MAC
-		// The user's own plug-in folder, not /Library: that one needs a password, and this is where
-		// the plugins on a developer machine actually sit - it is what JUCE itself installs into.
-		// Anyone who wants them system wide can say so in Preferences.
-		const auto home = juce::File::getSpecialLocation(juce::File::userHomeDirectory).getFullPathName().toStdString();
+		// The machine-wide plug-in folders, which is where the installers of nearly every other maker
+		// put theirs and so where people go looking (BUG-10526). Writing there may need a password,
+		// which the install asks for - see ElevatedTask.
+		const std::string library = "/Library/Audio/Plug-Ins";
 
 		switch (_format)
 		{
-		case PluginFormat::VST2:  return home + "/Library/Audio/Plug-Ins/VST";
-		case PluginFormat::VST3:  return home + "/Library/Audio/Plug-Ins/VST3";
-		case PluginFormat::CLAP:  return home + "/Library/Audio/Plug-Ins/CLAP";
-		case PluginFormat::AU:    return home + "/Library/Audio/Plug-Ins/Components";
-		case PluginFormat::LV2:   return home + "/Library/Audio/Plug-Ins/LV2";
+		case PluginFormat::VST2:  return library + "/VST";
+		case PluginFormat::VST3:  return library + "/VST3";
+		case PluginFormat::CLAP:  return library + "/CLAP";
+		case PluginFormat::AU:    return library + "/Components";
+		case PluginFormat::LV2:   return library + "/LV2";
 
-		// The user's own Applications folder, for the same reason as the plug-ins above: the
-		// one in / needs a password, and the Finder shows this one just the same.
-		case PluginFormat::Standalone: return home + "/Applications";
+		// The user's own Applications folder: the Finder shows it just the same, and a program is
+		// only found again by the record of where it went, so moving this default would lose every
+		// one installed so far.
+		case PluginFormat::Standalone:
+			return juce::File::getSpecialLocation(juce::File::userHomeDirectory).getFullPathName().toStdString() + "/Applications";
 
 		default:                  return {};
 		}
@@ -169,9 +171,11 @@ namespace pluginManager
 		default: break;
 		}
 #elif JUCE_MAC
-		// The machine-wide tree. The default is the user's own because writing to this one needs a
-		// password, but it is where installers put a plugin, so it is where most of them are.
-		const std::string library = "/Library/Audio/Plug-Ins";
+		// The user's own tree beside the machine-wide default. It was the default until 2.2.28, so
+		// everything this installed before then is in there - and found there, it is upgraded where
+		// it is rather than installed a second time into the new default (see PluginManager::pathFor).
+		const auto library = juce::File::getSpecialLocation(juce::File::userHomeDirectory).getFullPathName().toStdString()
+			+ "/Library/Audio/Plug-Ins";
 
 		switch (_format)
 		{
@@ -424,7 +428,7 @@ namespace pluginManager
 			return {};
 		}
 
-		std::string versionResourceOf(const juce::File& _file)
+		std::vector<char> versionInfoOf(const juce::File& _file)
 		{
 			if (!_file.existsAsFile())
 				return {};
@@ -440,6 +444,16 @@ namespace pluginManager
 			std::vector<char> data(size);
 
 			if (!GetFileVersionInfoW(path.toWideCharPointer(), handle, size, data.data()))
+				return {};
+
+			return data;
+		}
+
+		std::string versionResourceOf(const juce::File& _file)
+		{
+			auto data = versionInfoOf(_file);
+
+			if (data.empty())
 				return {};
 
 			VS_FIXEDFILEINFO* info = nullptr;
@@ -458,10 +472,40 @@ namespace pluginManager
 
 			return std::to_string(major) + '.' + std::to_string(minor) + '.' + std::to_string(patch);
 		}
+
+		// From the string table this time, which is per language: the first one the resource lists.
+		std::string companyOf(const juce::File& _file)
+		{
+			auto data = versionInfoOf(_file);
+
+			if (data.empty())
+				return {};
+
+			struct Translation { WORD language; WORD codePage; };
+
+			Translation* translations = nullptr;
+			UINT length = 0;
+
+			if (!VerQueryValueW(data.data(), L"\\VarFileInfo\\Translation", reinterpret_cast<void**>(&translations), &length) ||
+				!translations || length < sizeof(Translation))
+			{
+				return {};
+			}
+
+			wchar_t key[64];
+			swprintf(key, 64, L"\\StringFileInfo\\%04x%04x\\CompanyName", translations->language, translations->codePage);
+
+			wchar_t* company = nullptr;
+
+			if (!VerQueryValueW(data.data(), key, reinterpret_cast<void**>(&company), &length) || !company || !length)
+				return {};
+
+			return juce::String(company).trim().toStdString();
+		}
 #elif JUCE_MAC
 		// Every plugin format is a bundle here, so the version is in its Info.plist. Read through
 		// CFBundle rather than as XML: Xcode writes those plists in the binary format.
-		std::string bundleVersionOf(const juce::File& _bundle)
+		std::string bundleStringOf(const juce::File& _bundle, const CFStringRef _key)
 		{
 			if (!_bundle.isDirectory())
 				return {};
@@ -487,13 +531,13 @@ namespace pluginManager
 
 			std::string result;
 
-			// The short string is the one that reads like a version; CFBundleVersion is the build.
-			if (const auto* value = static_cast<CFStringRef>(
-				CFBundleGetValueForInfoDictionaryKey(bundle, CFSTR("CFBundleShortVersionString"))))
-			{
-				char buffer[64] = {};
+			const auto* value = CFBundleGetValueForInfoDictionaryKey(bundle, _key);
 
-				if (CFStringGetCString(value, buffer, sizeof(buffer), kCFStringEncodingUTF8))
+			if (value && CFGetTypeID(value) == CFStringGetTypeID())
+			{
+				char buffer[256] = {};
+
+				if (CFStringGetCString(static_cast<CFStringRef>(value), buffer, sizeof(buffer), kCFStringEncodingUTF8))
 					result = buffer;
 			}
 
@@ -525,11 +569,54 @@ namespace pluginManager
 #if JUCE_WINDOWS
 		return versionResourceOf(binaryOf(installed));
 #elif JUCE_MAC
-		return bundleVersionOf(installed);
+		// The short string is the one that reads like a version; CFBundleVersion is the build.
+		return bundleStringOf(installed, CFSTR("CFBundleShortVersionString"));
 #else
 		// An ELF carries nothing to read, so for everything but an LV2 a plugin this program did not
 		// install is of an unknown version here.
 		return {};
 #endif
+	}
+
+	std::string PlatformUtils::otherMaker(const std::string& _path)
+	{
+		const auto file = juce::File(juce::String(_path));
+
+		if (!file.exists())
+			return {};
+
+#if JUCE_MAC
+		const auto id = bundleStringOf(file, CFSTR("CFBundleIdentifier"));
+
+		// Builds from before BUNDLE_ID was set carry JUCE's default, the company name as it is
+		// written: "com.The Usual Suspects.<target>". Compared without what is not a letter, a digit
+		// or a dot, so that one and ours are the same name.
+		const auto normalised = juce::String(id).toLowerCase().retainCharacters("abcdefghijklmnopqrstuvwxyz0123456789.");
+
+		return id.empty() || normalised.startsWith("com.theusualsuspects.") ? std::string() : id;
+#elif JUCE_WINDOWS
+		const auto company = companyOf(binaryOf(file));
+
+		return company.empty() || juce::String(company).equalsIgnoreCase("The Usual Suspects") ? std::string() : company;
+#else
+		return {};
+#endif
+	}
+
+	std::string PlatformUtils::inside(const std::string& _root, const std::string& _path)
+	{
+		const auto path = juce::String(_path).replaceCharacter('\\', '/');
+
+		if (path.isEmpty() || path.startsWithChar('/') || path.containsChar(':'))
+			return {};
+
+		juce::StringArray parts;
+		parts.addTokens(path, "/", {});
+		parts.removeEmptyStrings();
+
+		if (parts.isEmpty() || parts.contains("..") || parts.contains("."))
+			return {};
+
+		return juce::File(juce::String(_root)).getChildFile(parts.joinIntoString("/")).getFullPathName().toStdString();
 	}
 }

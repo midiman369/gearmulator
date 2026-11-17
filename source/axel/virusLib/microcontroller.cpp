@@ -26,8 +26,10 @@ constexpr uint32_t g_singleRamBankCount = 2;
 constexpr uint8_t g_arpMode = 1;
 constexpr uint8_t g_arpModeParamTI = 15;
 
-// Virus TI, page D: Switches/Arpeggiator Enable
+// Virus TI, page D: Switches/EQ Enable, Arpeggiator Enable, Delay Enable, Reverb Enable
+constexpr uint8_t g_eqEnableTI = 0x19;
 constexpr uint8_t g_arpEnableTI = 0x1a;
+constexpr uint8_t g_reverbEnableTI = 0x1c;
 
 // Up to Chord. Arp>Matrix (7, TI) modulates instead of playing notes, the firmware keeps playing that
 static bool playsNotes(const uint32_t _arpMode)
@@ -190,6 +192,11 @@ void Microcontroller::sendInitControlCommands(uint8_t _masterVolume)
 
 		m_hdi08.writeRX(initCodeDS);
 
+		// The init code switches EQ, Arpeggiator, Delay and Reverb on. Known as global settings, the editor shows them
+		// and a state saves them
+		for(auto param = g_eqEnableTI; param <= g_reverbEnableTI; ++param)
+			m_globalSettings[param] = 1;
+
 #if 0
 		constexpr uint8_t prts = 0x4f;
 
@@ -266,7 +273,7 @@ void Microcontroller::writeHostBitsWithWait(const uint8_t flag0, const uint8_t f
 
 bool Microcontroller::sendPreset(const uint8_t program, const TPreset& preset, const bool isMulti)
 {
-	if(!isMulti && !isValid(preset))
+	if(!isMulti && !isValid(preset, false))
 		return false;
 
 	std::lock_guard lock(m_mutex);
@@ -334,7 +341,7 @@ bool Microcontroller::sendPreset(const uint8_t program, const TPreset& preset, c
 				++it;
 		}
 
-		m_pendingPresetWrites.emplace_back(SPendingPresetWrite{program, isMulti, preset});
+		m_pendingPresetWrites.emplace_back(SPendingPresetWrite{program, isMulti});
 
 		return true;
 	}
@@ -460,7 +467,7 @@ void Microcontroller::getArpeggiatorSingles(std::array<const TPreset*, 16>& _sin
 
 	_singles.fill(nullptr);
 
-	// The TI's firmware plays no arpeggio with the switch off. Unknown is on, the firmware is started with it on
+	// The TI's firmware plays no arpeggio with the switch off
 	if(m_rom.isTIFamily() && m_globalSettings[g_arpEnableTI] == 0)
 		return;
 
@@ -518,6 +525,23 @@ bool Microcontroller::send(const Page _page, const uint8_t _part, const uint8_t 
 	m_hdi08.writeRX(buf, 2);
 
 //	LOG("Send command, page " << (int)_page << ", part " << (int)_part << ", param " << (int)_param << ", value " << (int)_value);
+
+	return true;
+}
+
+bool Microcontroller::sendParameterChange(const Page _page, const uint8_t _part, const uint8_t _param, const uint8_t _value)
+{
+	// The TI's USB controller passes a parameter change to the OS as the SysEx it is, which the OS parses itself and
+	// takes as an edit of the host's. Sent as a command (send()), the OS takes it as an edit on its front panel and
+	// reports it on the panel cable, as SysEx where the page has no controllers (EMU-271). In the MIDI queue it also
+	// keeps its place between the notes
+	std::lock_guard lock(m_mutex);
+
+	SMidiEvent ev(MidiEventSource::Internal);
+	ev.sysex = {M_STARTOFSYSEX, 0x00, 0x20, 0x33, 0x01, OMNI_DEVICE_ID, static_cast<uint8_t>(_page), _part, _param, firmwareArpMode(_page, _param, _value), M_ENDOFSYSEX};
+
+	for (auto& midiQueue : m_midiQueues)
+		midiQueue.add(ev);
 
 	return true;
 }
@@ -667,7 +691,7 @@ bool Microcontroller::sendSysex(const synthLib::SysexBuffer& _data, std::vector<
 
 	auto buildPresetResponse = [&](const uint8_t _type, const BankNumber _bank, const uint8_t _program, const TPreset& _dump)
 	{
-		if(!isValid(_dump))
+		if(!isValid(_dump, _type == DUMP_MULTI))
 			return;
 
 		SMidiEvent ev(MidiEventSource::Device);
@@ -789,7 +813,7 @@ bool Microcontroller::sendSysex(const synthLib::SysexBuffer& _data, std::vector<
 		const uint8_t channel = _part == SINGLE ? 0 : _part;
 
 		for (const auto cc : g_pageA)	 _responses.emplace_back(MidiEventSource::Device, M_CONTROLCHANGE + channel, cc, single[cc], 0);
-		for (const auto cc : g_pageB)	 _responses.emplace_back(MidiEventSource::Device, M_POLYPRESSURE, cc, single[cc + 128], 0);
+		for (const auto cc : g_pageB)	 _responses.emplace_back(MidiEventSource::Device, M_POLYPRESSURE + channel, cc, single[cc + 128], 0);
 	};
 
 	auto enqueue = [&]
@@ -985,6 +1009,9 @@ bool Microcontroller::sendSysex(const synthLib::SysexBuffer& _data, std::vector<
 						applyToSingleEditBuffer(page, SINGLE, param, value);
 					}
 				}
+
+				if(m_rom.isTIFamily() && page != globalSettingsPage())
+					return sendParameterChange(page, part, param, value);
 
 				return send(page, part, param, value);
 			}
@@ -1240,7 +1267,12 @@ void Microcontroller::process()
 
 	LOG("Dequeuing pending preset: " << (preset.isMulti ? "Multi" : "Single") << " program " << static_cast<int>(preset.program) << " (remaining=" << m_pendingPresetWrites.size() << ")");
 
-	sendPreset(preset.program, preset.data, preset.isMulti);
+	// The edit buffer, which sendPreset() set when it queued the preset. A parameter change that a state restore applies
+	// behind its presets changed it since, and would be lost with a copy taken then (BUG-10568). Any other one waits in
+	// m_pendingInput until the queue is empty
+	const auto& data = preset.isMulti ? m_multiEditBuffer : preset.program == SINGLE ? m_singleEditBuffer : m_singleEditBuffers[preset.program];
+
+	sendPreset(preset.program, data, preset.isMulti);
 }
 
 bool Microcontroller::getState(std::vector<unsigned char>& _state, const StateType _type)
@@ -1381,9 +1413,16 @@ void Microcontroller::readMidiOut(std::vector<synthLib::SMidiEvent>& _midiOut)
 			const auto& input = pending[count];
 
 			if (input.ev.sysex.empty())
+			{
 				processMIDI(input.ev, input.fpState);
+			}
 			else
+			{
+				// a request answered late is still a reply, like those synthLib::Device::process() marks
+				const auto first = _midiOut.size();
 				sendSysex(input.ev.sysex, _midiOut, input.ev.source);
+				markReplies(_midiOut, first, input.ev.source);
+			}
 		}
 
 		m_pendingInput.insert(m_pendingInput.begin(), std::make_move_iterator(pending.begin() + static_cast<ptrdiff_t>(count)), std::make_move_iterator(pending.end()));
@@ -1530,6 +1569,13 @@ void Microcontroller::applyToMultiEditBuffer(const Page _page, const uint8_t _pa
 			const auto idx = MD_PART_MIDI_CHANNEL + ((_param-PART_MIDI_CHANNEL)*16) + _part;
 			m_multiEditBuffer[idx] = _value;
 		}
+		else if (_param >= PART_ENABLE && _param <= PART_PROG_CHANGE_ENABLE && _param != PURE_TUNING)
+		{
+			// the part's switches are the bits of its state byte, in the order of their parameters
+			const auto bit = 1 << (_param - PART_ENABLE);
+			auto& state = m_multiEditBuffer[MD_PART_STATE + _part];
+			state = static_cast<uint8_t>(_value ? (state | bit) : (state & ~bit));
+		}
 		break;
 	}
 }
@@ -1619,9 +1665,12 @@ void Microcontroller::receiveUpgradedPreset()
 	}
 }
 
-bool Microcontroller::isValid(const TPreset& _preset)
+bool Microcontroller::isValid(const TPreset& _preset, const bool _isMulti)
 {
-	return _preset[240] >= 32 && _preset[240] <= 127;
+	// the first character of the name, see ROMFile::getSingleName/getMultiName. Byte 240 of a multi is the Part State of
+	// its first part, which dropped multis from a saved state (BUG-10568)
+	const auto c = _preset[_isMulti ? 4 : 240];
+	return c >= 32 && c <= 127;
 }
 
 SysexBuffer Microcontroller::createSingleDump(const ROMFile& _rom, const BankNumber _bank, const uint8_t _program, const TPreset& _preset, const uint8_t _deviceId)

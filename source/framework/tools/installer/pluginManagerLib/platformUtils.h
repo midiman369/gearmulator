@@ -29,9 +29,9 @@ namespace pluginManager
 
 		// Everywhere a build of this format is normally kept on this system, the default above
 		// first. For finding one that is already installed, which is nowhere near guaranteed to be
-		// in the one folder this would install it to: macOS keeps most plugins in the system
-		// /Library/Audio/Plug-Ins while the default here is the user's own, Linux has a /usr tree
-		// beside the ~/.vst3 default, and VST2 never had a standard place anywhere.
+		// in the one folder this would install it to: macOS has the user's own ~/Library/Audio/Plug-Ins
+		// as well as the system one that is the default here, Linux has a /usr tree beside the
+		// ~/.vst3 default, and VST2 never had a standard place anywhere.
 		//
 		// Only for looking. Where an install goes is still the location the settings name, and that
 		// folder is searched before any of these - see PluginManager::locateInstalled.
@@ -91,5 +91,20 @@ namespace pluginManager
 		// every format is a bundle and answers, on Linux nothing does. InstalledPlugins is what knows
 		// the rest.
 		static std::string getInstalledVersion(const std::string& _pluginId, PluginFormat _format, const std::string& _dir);
+
+		// Who made what is at _path, when that is somebody other than us - empty when it is ours or
+		// nothing says. Another maker's plugin can carry the very name one of ours installs under, and
+		// an install over one deleted it. Nothing is replaced, removed or taken out of a file this
+		// answers for.
+		//
+		// The bundle identifier on macOS, the company in the version resource on Windows; both are
+		// left empty by some of our builds (a CLAP has no version resource), which is why only a
+		// name that is there and is not ours counts. An ELF names nobody, so on Linux this is empty.
+		static std::string otherMaker(const std::string& _path);
+
+		// _path beneath _root, and nothing outside it: empty for one that is absolute, names a drive or
+		// climbs out with "..". The lists that name such paths come from a server or from a folder
+		// somebody handed over, and a "../../" in one must not be able to write anywhere else on the disk.
+		static std::string inside(const std::string& _root, const std::string& _path);
 	};
 }

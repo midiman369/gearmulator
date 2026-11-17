@@ -7,6 +7,7 @@
 #include "rmlDataProvider.h"
 #include "rmlHelper.h"
 #include "rmlInterfaces.h"
+#include "rmlNativeWindow.h"
 #include "rmlPopupWindow.h"
 #include "rmlRendererJuce.h"
 
@@ -223,19 +224,26 @@ namespace juceRmlUi
 		// SystemInterface may outlive this component if it's shared.
 		m_rmlInterfaces.getSystemInterface().setCursorChangedCallback({});
 
-#ifdef RMLUI_METAL_RENDERER
-		if (m_metalContext)
-			m_metalContext->detach();
-#endif
+		// before the debugger takes its documents out of the tree that the render thread walks
+		stopRendering();
+
 		m_renderProxy->setRenderer(nullptr, g_renderConfigSoftware);
 
 		enableDebugger(false);
 
-		if (m_openGLContext)
-			m_openGLContext->detach();
 		destroyRmlContext();
 
 		deleteAllChildren();
+	}
+
+	void RmlComponent::stopRendering()
+	{
+#ifdef RMLUI_METAL_RENDERER
+		if (m_metalContext)
+			m_metalContext->detach();
+#endif
+		if (m_openGLContext)
+			m_openGLContext->detach();
 	}
 
 	void RmlComponent::newOpenGLContextCreated()
@@ -273,7 +281,16 @@ namespace juceRmlUi
 
 		m_openGLContext->setSwapInterval(1);
 
-		bool haveCustomFPS = m_targetFPS >= 0;
+#if !JUCE_MAC
+		// juce puts the window of this context on screen before the context exists, and the first frame waits for
+		// the renderer, the shaders and the first update of the document. Until then the window is unpainted and
+		// shows white, so present a black frame now. Not on macOS, where juce swaps on the message thread on 10.13
+		glClearColor(0, 0, 0, 1);
+		glClear(GL_COLOR_BUFFER_BIT);
+		m_openGLContext->swapBuffers();
+#endif
+
+		bool haveCustomFPS = m_targetFPS > 0;
 
 		if (!haveCustomFPS)
 		{
@@ -547,6 +564,28 @@ namespace juceRmlUi
 		}
 	}
 
+	void RmlComponent::metalViewResized(MetalContext& _context)
+	{
+		// AppKit commits the new view size with the transaction of this run loop pass, the next frame from the
+		// render thread arrives a frame or more later. Until then the old frame is stretched to the new size,
+		// which squashes the whole UI. Drawn here, the frame at the new size is presented with that transaction.
+		if (m_updating || !m_rmlContext || !isOnScreen())
+			return;
+
+		_context.renderSynchronously([this]
+		{
+			// The render thread is not drawing now. A frame it has not drawn yet is drawn together with this one.
+			m_renderDone = true;
+
+			m_synchronousFrame = true;
+			update();
+			m_synchronousFrame = false;
+
+			// whether update() produced a frame, it does not when it holds one back for a skin's own size change
+			return !m_renderDone;
+		});
+	}
+
 	void RmlComponent::metalContextClosing(MetalContext&)
 	{
 		if (m_renderType == Renderer::Software)
@@ -565,8 +604,7 @@ namespace juceRmlUi
 		if (isVisible())
 			enqueueUpdate();
 
-		if (isVisible() && m_openGLContext && !m_openGLContext->isAttached())
-			m_openGLContext->attachTo(*this);
+		updateOpenGLAttachment();
 
 #ifdef RMLUI_METAL_RENDERER
 		if (isVisible() && m_metalContext)
@@ -940,6 +978,10 @@ namespace juceRmlUi
 		if (m_metalContext)
 			m_metalContext->attachTo(*this);
 #endif
+		if (auto* peer = getPeer())
+			setBlackWindowBackground(peer->getNativeHandle());
+
+		updateOpenGLAttachment();
 
 		Component::parentHierarchyChanged();
 	}
@@ -1112,6 +1154,9 @@ namespace juceRmlUi
 
 		auto frameEventActive = false;
 
+		// set when this frame is not drawn, see below
+		bool holdFrame = false;
+
 		{
 			std::scoped_lock lock(m_contextRenderMutex);
 
@@ -1145,9 +1190,15 @@ namespace juceRmlUi
 					if (safe)
 						safe->evDocumentSizeChanged(safe.getComponent());
 				});
+
+				// A skin that changed its own size in the fixed window mode gets the matching window size from
+				// the message thread, a frame or more later. Drawn now, the new layout would land in the old
+				// size - cut off, or with an empty band - so this frame is skipped and the last one stays until
+				// the window has its new size (or the next idle tick, should the host refuse it).
+				holdFrame = !m_freeWindowMode;
 			}
 
-			if (visible)
+			if (visible && !holdFrame)
 			{
 				m_rmlContext->Render();
 
@@ -1204,7 +1255,7 @@ namespace juceRmlUi
 		m_updating = false;
 
 		// trigger a repaint and wait for OpenGL to be done with it
-		if (!visible)
+		if (!visible || holdFrame)
 		{
 			// no frame was produced, unblock the next update
 			m_renderDone = true;
@@ -1238,7 +1289,8 @@ namespace juceRmlUi
 		{
 			// The layer geometry comes from AppKit objects, which only the message thread may read.
 			m_metalContext->updateDrawableSize();
-			m_metalContext->triggerRepaint();
+			if (!m_synchronousFrame)
+				m_metalContext->triggerRepaint();
 		}
 #endif
 
@@ -1331,14 +1383,68 @@ namespace juceRmlUi
 		return _size;
 	}
 
-	void RmlComponent::paint(juce::Graphics& _g)
+	void RmlComponent::updateOpenGLAttachment()
 	{
-		if (m_openGLContext)
+		if (!m_openGLContext)
 			return;
 
-		auto* r = dynamic_cast<RendererJuce*>(m_renderInterface.get());
-		if (!r)
+		// A plugin editor keeps this component while the host closes its window and opens a new one. juce would attach
+		// the context again by itself as soon as this is in the new window, before anything painted there, see paint()
+		if (!isVisible() || !getPeer())
+		{
+			if (m_openGLContext->getTargetComponent())
+				m_openGLContext->detach();
 			return;
+		}
+
+		if (m_openGLContext->getTargetComponent())
+			return;
+
+		// The context is attached by paint(), after the component has been painted once. A window that is never
+		// painted, for example in a hidden host, gets it a little later
+		repaint();
+		juce::Timer::callAfterDelay(500, [safe = juce::Component::SafePointer<RmlComponent>(this)]
+		{
+			if (safe)
+				safe->attachOpenGLContext();
+		});
+	}
+
+	void RmlComponent::attachOpenGLContext()
+	{
+		if (!m_openGLContext || m_openGLContext->getTargetComponent() || !isVisible() || !getPeer())
+			return;
+
+		m_openGLContext->attachTo(*this);
+
+		// update() may already have handed over a frame, its repaint request went nowhere
+		m_openGLContext->triggerRepaint();
+	}
+
+	void RmlComponent::paint(juce::Graphics& _g)
+	{
+		auto* r = m_openGLContext ? nullptr : dynamic_cast<RendererJuce*>(m_renderInterface.get());
+
+		if (!r)
+		{
+			// OpenGL and Metal draw into a surface of their own on top of this component. Until it is attached and
+			// has presented its first frame, the window shows what is painted here, or else the host's background:
+			// a white flash on Windows, a red one in Bitwig on macOS
+			_g.fillAll(juce::Colours::black);
+
+			// Attach only once this has been painted. juce shows the window of the context first and then creates
+			// the context on the message thread, which takes a few hundred ms (the driver is loaded). Nothing can
+			// paint in that time, so attached right away, the host's background showed through instead of this.
+			if (m_openGLContext && !m_openGLContext->getTargetComponent())
+			{
+				juce::MessageManager::callAsync([safe = juce::Component::SafePointer<RmlComponent>(this)]
+				{
+					if (safe)
+						safe->attachOpenGLContext();
+				});
+			}
+			return;
+		}
 
 		// Always hand the frame to juce through _g. An earlier shortcut wrote it straight into the
 		// bitmap the window peer paints into, at that bitmap's origin - which is the window's
@@ -1815,6 +1921,12 @@ namespace juceRmlUi
 	{
 		RmlInterfaces::ScopedAccess access(*this);
 		m_drag.itemDragEnter(_dragSourceDetails);
+	}
+
+	void RmlComponent::itemDragMove(const SourceDetails& _dragSourceDetails)
+	{
+		RmlInterfaces::ScopedAccess access(*this);
+		m_drag.itemDragMove(_dragSourceDetails);
 	}
 
 	void RmlComponent::itemDragExit(const SourceDetails& _dragSourceDetails)

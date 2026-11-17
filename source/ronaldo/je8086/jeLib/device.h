@@ -10,7 +10,7 @@
 #include "synthLib/device.h"
 #include "synthLib/frontPanelSysex.h"
 
-namespace rLib
+namespace synthLib
 {
 	template<typename TBoard> class BoardThread;
 }
@@ -63,13 +63,16 @@ namespace jeLib
 		void createCustomParameterMessages(std::vector<synthLib::SMidiEvent>& _messages) const;
 
 		std::unique_ptr<Je8086> m_je8086;
-		std::unique_ptr<rLib::BoardThread<Je8086>> m_thread;
+		std::unique_ptr<synthLib::BoardThread<Je8086>> m_thread;
 
 		std::vector<synthLib::SMidiEvent> m_midiIn;
 		std::vector<synthLib::SMidiEvent> m_midiOut;
 
 		State m_state;
 		synthLib::FrontPanelTransport m_frontPanel;
+
+		// the other model's system block, never applied here, saved so that switching the ROM back restores it
+		synthLib::SysexBuffer m_otherModelSystemDump;
 
 		baseLib::EventListener<uint8_t, uint8_t, int32_t> m_paramChangedListener;
 
